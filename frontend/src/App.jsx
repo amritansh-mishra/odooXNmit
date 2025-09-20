@@ -1,7 +1,17 @@
 import React from 'react';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import MonochromaticDashboard from './components/Dashboard/MonochromaticDashboard';
 import GlassmorphismAuth from './components/auth/GlassmorphismAuth';
+import Layout from './components/common/layout';
+import Transactions from './components/Transaction';
+import PaymentPage from './components/payments/PaymentPage';
+import ContactMaster from './components/contacts/ContactMaster';
+import ProductMaster from './components/products/ProductMaster';
+import Reports from './components/Reports';
+import ChartOfAccounts from './components/accounts/ChartOfAccounts';
+import SalesOrderMaster from './components/orders/SalesOrderMaster';
+import PurchaseOrderMaster from './components/orders/PurchaseOrderMaster';
 import './App.css';
 
 function AppContent() {
@@ -17,7 +27,28 @@ function AppContent() {
 
   return (
     <div className="App">
-      {user ? <MonochromaticDashboard /> : <GlassmorphismAuth />}
+      {user ? (
+        <BrowserRouter>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<MonochromaticDashboard />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/payments" element={<PaymentPage onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
+              <Route path="/contacts" element={<ContactMaster onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
+              <Route path="/products" element={<ProductMaster onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/coa" element={<ChartOfAccounts onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
+              <Route path="/orders/sales" element={<SalesOrderMaster onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
+              <Route path="/orders/purchase" element={<PurchaseOrderMaster onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </Layout>
+        </BrowserRouter>
+      ) : (
+        <GlassmorphismAuth />
+      )}
     </div>
   );
 }

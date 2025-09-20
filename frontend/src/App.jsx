@@ -2,7 +2,7 @@ import React from 'react';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import MonochromaticDashboard from './components/Dashboard/MonochromaticDashboard';
-import GlassmorphismAuth from './components/auth/GlassmorphismAuth';
+import ProfessionalAuth from './components/auth/GlassmorphismAuth';
 import Layout from './components/common/layout';
 import Transactions from './components/Transaction';
 import PaymentPage from './components/payments/PaymentPage';
@@ -20,8 +20,12 @@ function AppContent() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg-secondary)' }}>
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-heading-4" style={{ color: 'var(--text-primary)' }}>Loading...</p>
+          <p className="text-body-small mt-2" style={{ color: 'var(--text-tertiary)' }}>Please wait while we prepare your dashboard</p>
+        </div>
       </div>
     );
   }
@@ -49,7 +53,7 @@ function AppContent() {
           </Layout>
         </BrowserRouter>
       ) : (
-        <GlassmorphismAuth />
+        <ProfessionalAuth />
       )}
     </div>
   );

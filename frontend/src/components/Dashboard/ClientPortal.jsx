@@ -288,31 +288,27 @@ const ClientPortal = ({ user }) => {
                   placeholder="Search invoices..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                  style={{
-                    border: `1px solid var(--border)`,
-                    backgroundColor: 'var(--surface)',
-                    color: 'var(--text-primary)'
-                  }}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
                 />
               </div>
-              <div className="relative">
-                <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <div className="relative min-w-[160px]">
+                <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none z-10" />
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  className="pl-10 pr-8 py-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                  style={{
-                    border: `1px solid var(--border)`,
-                    backgroundColor: 'var(--surface)',
-                    color: 'var(--text-primary)'
-                  }}
+                  className="w-full pl-10 pr-8 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors appearance-none"
                 >
                   <option value="all">All Status</option>
                   <option value="paid">Paid</option>
                   <option value="pending">Pending</option>
                   <option value="overdue">Overdue</option>
                 </select>
+                {/* Custom dropdown arrow */}
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
               </div>
             </div>
 

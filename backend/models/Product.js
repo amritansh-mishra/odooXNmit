@@ -1,46 +1,21 @@
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const mongoose = require("mongoose");
+const Product = sequelize.define('Product', {
+  name: { type: DataTypes.STRING, allowNull: false },
+  type: { type: DataTypes.ENUM('Goods', 'Service'), allowNull: false },
+  sales_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+  purchase_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+  sales_tax: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
+  purchase_tax: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 0 },
+  hsn_code: { type: DataTypes.STRING, allowNull: true },
+  category: { type: DataTypes.STRING, allowNull: true },
+  is_active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  archived_at: { type: DataTypes.DATE, defaultValue: null },
+}, {
+  timestamps: true,
+  tableName: 'products',
+  underscored: true,
+});
 
-const productSchema = new mongoose.Schema({
-  name: { 
-    type: String, 
-    required: true 
-},
-  type: {
-     type: String, 
-     enum: ["Goods", "Service"],
-     required: true 
-    },
-  salesPrice: { 
-    type: Number, 
-    required: true 
-    },
-  purchasePrice: { 
-    type: Number, 
-    required: true 
-    },
-  salesTax: { 
-    type: Number, 
-    default: 0 
-    },
-  purchaseTax: { 
-    type: Number, 
-    default: 0 
-    },
-  hsnCode: { 
-    type: String 
-    },
-  category: {           
-    type: String 
-    },
-  // Master data management
-  isActive: { type: Boolean, default: true },
-  archivedAt: { type: Date, default: null }
-}, { timestamps: true });
-
-// Indexes for faster list/search
-productSchema.index({ name: 1 });
-productSchema.index({ type: 1 });
-productSchema.index({ isActive: 1 });
-
-module.exports = mongoose.model("Product", productSchema);
+module.exports = Product;

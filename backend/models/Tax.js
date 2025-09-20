@@ -1,40 +1,17 @@
-const mongoose = require("mongoose");
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const taxSchema = new mongoose.Schema({
-  name: { 
-    type: String,
-    required: true 
-    }, // e.g., GST 5%
+const Tax = sequelize.define('Tax', {
+  name: { type: DataTypes.STRING, allowNull: false },
+  method: { type: DataTypes.ENUM('Percentage', 'Fixed'), allowNull: false },
+  value: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+  applicable_on: { type: DataTypes.ENUM('Sales', 'Purchase', 'Both'), allowNull: false },
+  is_active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  archived_at: { type: DataTypes.DATE, defaultValue: null }
+}, {
+  timestamps: true,
+  tableName: 'taxes',
+  underscored: true,
+});
 
-  method: { 
-    type: String,
-    enum: ["Percentage", "Fixed"],
-     required: true 
-    },
-
-  value: { 
-    type: Number,
-    required: true 
-    }, // 5 = 5%
-
-  applicableOn: { 
-    type: String,
-    enum: ["Sales", "Purchase", "Both"],
-    required: true 
-    },
-
-  // Master data management
-  isActive: { type: Boolean, default: true },
-  archivedAt: { type: Date, default: null }
-
-},
-
- { 
-    timestamps: true
- });
-
-// Indexes for search/list
-taxSchema.index({ name: 1 });
-taxSchema.index({ applicableOn: 1, isActive: 1 });
-
-module.exports = mongoose.model("Tax", taxSchema);
+module.exports = Tax;

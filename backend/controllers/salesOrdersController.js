@@ -1,44 +1,66 @@
+const { Op } = require('sequelize');
 const SalesOrder = require('../models/SalesOrder');
 const Product = require('../models/Product');
-const Customer = require('../models/Customer');
+const Contact = require('../models/Customer');
 const Counter = require('../models/Counter');
-const CustomerInvoice = require('../models/CustomerInvoice');
-const CoA = require('../models/CoA');
+const Invoice = require('../models/CustomerInvoice');
 
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10), 1), 100);
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
+}
+
+async function getNextSONumber() {
+  const key = 'so';
+  const [ctr] = await Counter.findOrCreate({ where: { key }, defaults: { seq: 0 } });
+  await ctr.update({ seq: ctr.seq + 1 });
+  return 'SO' + String(ctr.seq).padStart(5, '0');
+}
+
+async function getNextInvoiceNumber() {
+  const year = new Date().getFullYear();
+  const key = `ci-${year}`;
+  const [ctr] = await Counter.findOrCreate({ where: { key }, defaults: { seq: 0 } });
+  await ctr.update({ seq: ctr.seq + 1 });
+  return `INV/${year}/${String(ctr.seq).padStart(4, '0')}`;
 }
 
 // GET /api/sales-orders/:id/print
 exports.printSO = async (req, res, next) => {
   try {
-    const so = await SalesOrder.findById(req.params.id)
-      .populate('customer', 'name email mobile')
-      .populate('items.product', 'name hsnCode salesPrice');
+    const so = await SalesOrder.findByPk(req.params.id);
     if (!so) return res.status(404).json({ message: 'Sales Order not found' });
 
+    const items = Array.isArray(so.items) ? so.items : [];
+    const enriched = [];
+    for (const l of items) {
+      let product = null;
+      if (l.product) product = await Product.findByPk(l.product);
+      const unitPrice = Number(l.unitPrice) || 0;
+      const qty = Number(l.quantity) || 0;
+      const taxRate = Number(l.taxRate || 0);
+      enriched.push({
+        product: product ? { id: product.id, name: product.name, hsnCode: product.hsn_code } : null,
+        quantity: qty,
+        unitPrice: unitPrice,
+        taxRate,
+        lineUntaxed: unitPrice * qty,
+        lineTax: (unitPrice * qty * taxRate) / 100,
+        lineTotal: unitPrice * qty * (1 + taxRate / 100),
+      });
+    }
+
     const payload = {
-      soNumber: so.soNumber,
-      soDate: so.soDate,
+      soNumber: so.so_number,
+      soDate: so.so_date,
       reference: so.reference || null,
       status: so.status,
-      customer: so.customer,
-      items: so.items.map(l => ({
-        product: l.product,
-        quantity: l.quantity,
-        unitPrice: l.unitPrice,
-        taxRate: l.taxRate,
-        lineUntaxed: l.unitPrice * l.quantity,
-        lineTax: (l.unitPrice * l.quantity * (l.taxRate || 0)) / 100,
-        lineTotal: l.unitPrice * l.quantity * (1 + (l.taxRate || 0)/100),
-      })),
+      customer: so.customer_id,
+      items: enriched,
       totals: {
-        untaxed: so.totalUntaxedAmount,
-        tax: so.totalTaxAmount,
-        total: so.totalAmount,
+        total: Number(so.total_amount) || 0,
       },
     };
     res.json({ success: true, print: payload });
@@ -48,171 +70,132 @@ exports.printSO = async (req, res, next) => {
 // POST /api/sales-orders/:id/create-invoice
 exports.createInvoiceFromSO = async (req, res, next) => {
   try {
-    const so = await SalesOrder.findById(req.params.id).populate('items.product', 'hsnCode salesPrice');
+    const so = await SalesOrder.findByPk(req.params.id);
     if (!so) return res.status(404).json({ message: 'Sales Order not found' });
     if (so.status !== 'confirmed') return res.status(400).json({ message: 'Only confirmed SO can be invoiced' });
 
-    const defaultIncomeAcc = await resolveDefaultIncomeAccount();
-    const items = so.items.map(line => ({
-      product: line.product?._id || line.product,
-      hsnCode: line.product?.hsnCode || null,
-      account: defaultIncomeAcc,
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      taxRate: line.taxRate || 0,
-    }));
-
     const invoiceNumber = await getNextInvoiceNumber();
-    const invoiceDate = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
-    const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : new Date(Date.now() + 30*24*60*60*1000);
+    const invoice_date = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
+    const due_date = req.body.dueDate ? new Date(req.body.dueDate) : new Date(Date.now() + 30*24*60*60*1000);
 
-    const inv = await CustomerInvoice.create({
-      invoiceNumber,
-      customer: so.customer,
-      salesOrder: so._id,
-      reference: req.body.reference || null,
-      invoiceDate,
-      dueDate,
-      items,
-      status: 'confirmed',
+    const inv = await Invoice.create({
+      sales_order_id: so.id,
+      invoice_date,
+      due_date,
+      payment_status: 'Unpaid',
+      payment_mode: 'Bank',
+      total_amount: so.total_amount,
+      invoice_number: invoiceNumber, // will be ignored if not defined in model
     });
 
     res.status(201).json({ success: true, item: inv });
   } catch (err) { next(err); }
 };
 
-// Helpers for SO -> Invoice
-async function resolveDefaultIncomeAccount() {
-  let acc = await CoA.findOne({ accountName: /Sales Income/i });
-  if (!acc) acc = await CoA.findOne({ type: 'Income' });
-  return acc ? acc._id : null;
-}
-
-async function getNextInvoiceNumber() {
-  const year = new Date().getFullYear();
-  const key = `ci-${year}`;
-  const doc = await Counter.findOneAndUpdate(
-    { key },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true }
-  );
-  const seq = doc.seq || 1;
-  return `INV/${year}/${String(seq).padStart(4, '0')}`;
-}
-
-async function getNextSONumber() {
-  const doc = await Counter.findOneAndUpdate(
-    { key: 'so' },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true }
-  );
-  const seq = doc.seq || 1;
-  return 'SO' + String(seq).padStart(5, '0');
-}
-
-
+// List SOs
 exports.listSOs = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req);
+    const { page, limit, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
     const status = req.query.status;
     const customer = req.query.customer;
 
-    const filter = {};
-    if (status) filter.status = status;
-    if (customer) filter.customer = customer;
-    if (q) filter.soNumber = new RegExp(q, 'i');
+    const where = {};
+    if (status) where.status = status;
+    if (customer) where.customer_id = customer;
+    if (q) where.so_number = { [Op.like]: `%${q}%` };
 
-    const [items, total] = await Promise.all([
-      SalesOrder.find(filter)
-        .populate('customer', 'name email')
-        .populate('items.product', 'name salesPrice')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      SalesOrder.countDocuments(filter),
-    ]);
+    const { rows, count } = await SalesOrder.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit,
+      offset,
+    });
 
-    res.json({ success: true, page, limit, total, items });
+    res.json({ success: true, page, limit, total: count, items: rows });
   } catch (err) { next(err); }
 };
 
-
 exports.getSO = async (req, res, next) => {
   try {
-    const so = await SalesOrder.findById(req.params.id)
-      .populate('customer', 'name email')
-      .populate('items.product', 'name salesPrice');
+    const so = await SalesOrder.findByPk(req.params.id);
     if (!so) return res.status(404).json({ message: 'Sales Order not found' });
     res.json({ success: true, item: so });
   } catch (err) { next(err); }
 };
 
-
 exports.createSO = async (req, res, next) => {
   try {
-    const customer = await Customer.findById(req.body.customer);
+    const customer = await Contact.findByPk(req.body.customer || req.body.customer_id);
     if (!customer) return res.status(400).json({ message: 'Invalid customer' });
 
-    if (Array.isArray(req.body.items)) {
-      for (const line of req.body.items) {
-        if (line.product && (line.unitPrice === undefined || line.unitPrice === null)) {
-          const prod = await Product.findById(line.product).lean();
-          if (prod) line.unitPrice = prod.salesPrice || 0;
-        }
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    for (const line of items) {
+      if (line.product && (line.unitPrice === undefined || line.unitPrice === null)) {
+        const prod = await Product.findByPk(line.product);
+        if (prod) line.unitPrice = Number(prod.sales_price) || 0;
       }
     }
 
-    const soNumber = req.body.soNumber || await getNextSONumber();
-    const payload = { ...req.body, soNumber };
+    const so_number = req.body.soNumber || req.body.so_number || await getNextSONumber();
+    const payload = {
+      customer_id: req.body.customer || req.body.customer_id,
+      items,
+      status: 'draft',
+      so_number,
+      reference: req.body.reference || null,
+      so_date: req.body.soDate ? new Date(req.body.soDate) : new Date(),
+    };
     const so = await SalesOrder.create(payload);
     res.status(201).json({ success: true, item: so });
   } catch (err) { next(err); }
 };
 
-
 exports.updateSO = async (req, res, next) => {
   try {
-    const so = await SalesOrder.findById(req.params.id);
+    const so = await SalesOrder.findByPk(req.params.id);
     if (!so) return res.status(404).json({ message: 'Sales Order not found' });
     if (so.status !== 'draft') return res.status(400).json({ message: 'Only draft SO can be updated' });
 
-    if (Array.isArray(req.body.items)) {  //only runs if items is actually an array of line items.
-      for (const line of req.body.items) {
+    const items = Array.isArray(req.body.items) ? req.body.items : so.items;
+    if (Array.isArray(items)) {
+      for (const line of items) {
         if (line.product && (line.unitPrice === undefined || line.unitPrice === null)) {
-          const prod = await Product.findById(line.product).lean();  // fetch the product’s default sales price from the database.
-          if (prod) line.unitPrice = prod.salesPrice || 0;
+          const prod = await Product.findByPk(line.product);
+          if (prod) line.unitPrice = Number(prod.sales_price) || 0;
         }
       }
     }
 
-    Object.assign(so, req.body); //copies all properties from req.body to the existing so(sales order). Updates things like customer, items, status
-    await so.save();   
+    await so.update({
+      customer_id: req.body.customer || req.body.customer_id || so.customer_id,
+      items,
+      status: req.body.status || so.status,
+      reference: req.body.reference ?? so.reference,
+      so_date: req.body.soDate ? new Date(req.body.soDate) : so.so_date,
+    });
     res.json({ success: true, item: so });
   } catch (err) { next(err); }
 };
 
 exports.confirmSO = async (req, res, next) => {
   try {
-    const so = await SalesOrder.findById(req.params.id);
+    const so = await SalesOrder.findByPk(req.params.id);
     if (!so) return res.status(404).json({ message: 'Sales Order not found' });
     if (so.status !== 'draft') return res.status(400).json({ message: 'Only draft SO can be confirmed' });
-    so.status = 'confirmed';
-    await so.save();
+    await so.update({ status: 'confirmed' });
     res.json({ success: true, item: so });
   } catch (err) { next(err); }
 };
 
-
 exports.cancelSO = async (req, res, next) => {
   try {
-    const so = await SalesOrder.findById(req.params.id);
+    const so = await SalesOrder.findByPk(req.params.id);
     if (!so) return res.status(404).json({ message: 'Sales Order not found' });
     if (so.status === 'confirmed') {
       return res.status(400).json({ message: 'Confirmed Sales Orders cannot be cancelled' });
     }
-    so.status = 'cancelled';
-    await so.save();
+    await so.update({ status: 'cancelled' });
     res.json({ success: true, item: so });
   } catch (err) { next(err); }
 };

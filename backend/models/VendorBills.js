@@ -1,71 +1,36 @@
-const mongoose = require("mongoose");
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const vendorBillSchema = new mongoose.Schema(
-  {
-    // Auto number like Bill/2025/0001
-    billNumber: { type: String, required: true, unique: true },
-
-    reference: { type: String, default: null },
-
-    purchaseOrder: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "PurchaseOrder",
-      required: false,
-    },
-
-    vendor: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Partner",
-      required: true,
-    },
-
-    invoiceDate: {
-      type: Date,
-      required: true,
-      default: Date.now,
-    },
-
-    dueDate: {
-      type: Date,
-      required: true,
-    },
-
-    status: {
-      type: String,
-      enum: ["draft", "confirmed", "cancelled"],
-      default: "draft",
-    },
-
-    items: [
-      {
-        product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-        hsnCode: { type: String, default: null },
-        account: { type: mongoose.Schema.Types.ObjectId, ref: "CoA", required: true },
-        quantity: { type: Number, required: true, min: 1 },
-        unitPrice: { type: Number, required: true, min: 0 },
-        taxRate: { type: Number, default: 0, min: 0 }, // percentage
-        lineUntaxed: { type: Number, default: 0 },
-        lineTax: { type: Number, default: 0 },
-        lineTotal: { type: Number, default: 0 },
-      },
-    ],
-
-    totalUntaxedAmount: { type: Number, default: 0 },
-    totalTaxAmount: { type: Number, default: 0 },
-    totalAmount: { type: Number, default: 0 },
-
-    paidCash: { type: Number, default: 0 },
-    paidBank: { type: Number, default: 0 },
-    amountDue: { type: Number, default: 0 },
+const VendorBill = sequelize.define('VendorBill', {
+  bill_number: { type: DataTypes.STRING, unique: true, allowNull: false },
+  reference: { type: DataTypes.STRING, allowNull: true },
+  purchase_order_id: { type: DataTypes.INTEGER, allowNull: true },
+  vendor_id: { type: DataTypes.INTEGER, allowNull: false },
+  invoice_date: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  due_date: { type: DataTypes.DATE, allowNull: false },
+  status: { type: DataTypes.ENUM('draft', 'confirmed', 'cancelled'), defaultValue: 'draft' },
+  items: {
+    type: DataTypes.JSON,
+    allowNull: false,
+    defaultValue: []
   },
-  { timestamps: true }
-);
+  total_untaxed_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+  total_tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+  total_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+  paid_cash: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+  paid_bank: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+  amount_due: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+}, {
+  timestamps: true,
+  tableName: 'vendor_bills',
+  underscored: true,
+});
 
 // Pre-save calculation of totals
-vendorBillSchema.pre("save", function (next) {
+VendorBill.beforeSave((instance, options) => {
   let untaxed = 0;
   let tax = 0;
-  for (const item of this.items) {
+  for (const item of instance.items) {
     const lineUntaxed = (item.unitPrice || 0) * (item.quantity || 0);
     const lineTax = (lineUntaxed * (item.taxRate || 0)) / 100;
     item.lineUntaxed = lineUntaxed;
@@ -74,12 +39,11 @@ vendorBillSchema.pre("save", function (next) {
     untaxed += lineUntaxed;
     tax += lineTax;
   }
-  this.totalUntaxedAmount = untaxed;
-  this.totalTaxAmount = tax;
-  this.totalAmount = untaxed + tax;
-  const paid = (this.paidCash || 0) + (this.paidBank || 0);
-  this.amountDue = Math.max(this.totalAmount - paid, 0);
-  next();
+  instance.total_untaxed_amount = untaxed;
+  instance.total_tax_amount = tax;
+  instance.total_amount = untaxed + tax;
+  const paid = (instance.paid_cash || 0) + (instance.paid_bank || 0);
+  instance.amount_due = Math.max(instance.total_amount - paid, 0);
 });
 
-module.exports = mongoose.model("VendorBill", vendorBillSchema);
+module.exports = VendorBill;

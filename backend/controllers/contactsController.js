@@ -1,43 +1,61 @@
+const { Op } = require('sequelize');
 const Contact = require('../models/Customer');
 
 // Helpers
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10), 1), 100);
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
+}
+
+function mapBodyToModel(body) {
+  return {
+    name: body.name,
+    type: body.type,
+    email: body.email,
+    mobile: body.mobile,
+    address_city: body.address?.city ?? body.address_city,
+    address_state: body.address?.state ?? body.address_state,
+    address_pincode: body.address?.pincode ?? body.address_pincode,
+    profile_image: body.profileImage ?? body.profile_image,
+    is_active: body.isActive ?? body.is_active,
+    archived_at: body.archivedAt ?? body.archived_at,
+  };
 }
 
 // GET /api/master/contacts
 exports.listContacts = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req);
+    const { page, limit, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
     const type = req.query.type;
-    const isActive = req.query.isActive === 'false' ? false : true; // default active
+    const isActive = req.query.isActive === 'false' ? false : true;
 
-    const filter = { ...(type ? { type } : {}), isActive };
+    const where = { ...(type ? { type } : {}), ...(isActive !== undefined ? { is_active: isActive } : {}) };
     if (q) {
-      filter.$or = [
-        { name: new RegExp(q, 'i') },
-        { email: new RegExp(q, 'i') },
-        { mobile: new RegExp(q, 'i') },
+      where[Op.or] = [
+        { name: { [Op.like]: `%${q}%` } },
+        { email: { [Op.like]: `%${q}%` } },
+        { mobile: { [Op.like]: `%${q}%` } },
       ];
     }
 
-    const [items, total] = await Promise.all([
-      Contact.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
-      Contact.countDocuments(filter),
-    ]);
+    const { rows, count } = await Contact.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit,
+      offset,
+    });
 
-    res.json({ success: true, page, limit, total, items });
+    res.json({ success: true, page, limit, total: count, items: rows });
   } catch (err) { next(err); }
 };
 
 // GET /api/master/contacts/:id
 exports.getContact = async (req, res, next) => {
   try {
-    const doc = await Contact.findById(req.params.id);
+    const doc = await Contact.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Contact not found' });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
@@ -46,7 +64,8 @@ exports.getContact = async (req, res, next) => {
 // POST /api/master/contacts
 exports.createContact = async (req, res, next) => {
   try {
-    const doc = await Contact.create(req.body);
+    const payload = mapBodyToModel(req.body);
+    const doc = await Contact.create(payload);
     res.status(201).json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
@@ -54,8 +73,9 @@ exports.createContact = async (req, res, next) => {
 // PUT /api/master/contacts/:id
 exports.updateContact = async (req, res, next) => {
   try {
-    const doc = await Contact.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    const doc = await Contact.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Contact not found' });
+    await doc.update(mapBodyToModel(req.body));
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
@@ -63,12 +83,9 @@ exports.updateContact = async (req, res, next) => {
 // PATCH /api/master/contacts/:id/archive
 exports.archiveContact = async (req, res, next) => {
   try {
-    const doc = await Contact.findByIdAndUpdate(
-      req.params.id,
-      { isActive: false, archivedAt: new Date() },
-      { new: true }
-    );
+    const doc = await Contact.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Contact not found' });
+    await doc.update({ is_active: false, archived_at: new Date() });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
@@ -76,12 +93,9 @@ exports.archiveContact = async (req, res, next) => {
 // PATCH /api/master/contacts/:id/unarchive
 exports.unarchiveContact = async (req, res, next) => {
   try {
-    const doc = await Contact.findByIdAndUpdate(
-      req.params.id,
-      { isActive: true, archivedAt: null },
-      { new: true }
-    );
+    const doc = await Contact.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Contact not found' });
+    await doc.update({ is_active: true, archived_at: null });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };

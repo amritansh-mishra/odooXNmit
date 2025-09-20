@@ -1,36 +1,16 @@
-const mongoose = require("mongoose");
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const stockLedgerSchema = new mongoose.Schema(
-  {
-    product: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
-      required: true,
-    },
+const StockLedger = sequelize.define('StockLedger', {
+  product_id: { type: DataTypes.INTEGER, allowNull: false },
+  type: { type: DataTypes.ENUM('In', 'Out'), allowNull: false },
+  quantity: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+  reference: { type: DataTypes.STRING, allowNull: true },
+  date: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+}, {
+  timestamps: true,
+  tableName: 'stock_ledger',
+  underscored: true,
+});
 
-    type: {
-      type: String,
-      enum: ["In", "Out"],
-      required: true,
-    },
-
-    quantity: {
-      type: Number,
-      required: true,
-      min: 1,
-    },
-
-    reference: {
-      type: String, // e.g., PO/Invoice number
-    },
-
-    date: {
-      type: Date,
-      required: true,
-      default: Date.now,
-    },
-  },
-  { timestamps: true }
-);
-
-module.exports = mongoose.model("StockLedger", stockLedgerSchema);
+module.exports = StockLedger;

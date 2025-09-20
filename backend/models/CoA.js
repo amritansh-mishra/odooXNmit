@@ -1,32 +1,16 @@
-const mongoose = require("mongoose");
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const coaSchema = new mongoose.Schema({
-  accountName: { 
-    type: String, 
-    required: true,
-    unique: true 
-    },
-
-  type: { 
-    type: String, 
-    enum: ["Asset", "Liability", "Expense", "Income", "Equity"], 
-    required: true 
-    },
-
-  description: { 
-    type: String 
-    },
-  // Master data management
-  isActive: { type: Boolean, default: true },
-  archivedAt: { type: Date, default: null }
-}, 
-
-{ 
-    timestamps: true 
+const CoA = sequelize.define('CoA', {
+  account_name: { type: DataTypes.STRING, allowNull: false, unique: true },
+  type: { type: DataTypes.ENUM('Asset', 'Liability', 'Expense', 'Income', 'Equity'), allowNull: false },
+  description: { type: DataTypes.STRING, allowNull: true },
+  is_active: { type: DataTypes.BOOLEAN, defaultValue: true },
+  archived_at: { type: DataTypes.DATE, defaultValue: null },
+}, {
+  timestamps: true,
+  tableName: 'coa',
+  underscored: true,
 });
 
-// Indexes
-coaSchema.index({ accountName: 1 });
-coaSchema.index({ type: 1, isActive: 1 });
-
-module.exports = mongoose.model("CoA", coaSchema);
+module.exports = CoA;

@@ -1,36 +1,16 @@
-const mongoose = require("mongoose");
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const paymentSchema = new mongoose.Schema(
-  {
-    invoice: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Invoice",
-      required: true,
-    },
+const Payment = sequelize.define('Payment', {
+  invoice_id: { type: DataTypes.INTEGER, allowNull: false },
+  payment_date: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  payment_mode: { type: DataTypes.ENUM('Cash', 'Bank'), defaultValue: 'Bank' },
+  amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+  notes: { type: DataTypes.STRING, allowNull: true },
+}, {
+  timestamps: true,
+  tableName: 'payments',
+  underscored: true,
+});
 
-    paymentDate: {
-      type: Date,
-      required: true,
-      default: Date.now,
-    },
-
-    paymentMode: {
-      type: String,
-      enum: ["Cash", "Bank"],
-      default: "Bank",
-    },
-
-    amount: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    notes: {
-      type: String,
-    },
-  },
-  { timestamps: true }
-);
-
-module.exports = mongoose.model("Payment", paymentSchema);
+module.exports = Payment;

@@ -1,78 +1,37 @@
-const mongoose = require("mongoose");
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const purchaseOrderSchema = new mongoose.Schema(
-  {
-    poNumber: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    poDate: {
-      type: Date,
-      default: Date.now,
-    },
-    reference: {
-      type: String,
-      default: null,
-    },
-    vendor: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Partner",
-      required: true,
-    },
-
-    items: [
-      {
-        product: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "Product",
-          required: true,
-        },
-        quantity: {
-          type: Number,
-          required: true,
-          min: 1,
-        },
-        unitPrice: {
-          type: Number,
-          required: true,
-          min: 0,
-        },
-        taxRate: { // percentage, e.g., 5 for 5%
-          type: Number,
-          default: 0,
-          min: 0,
-        },
-      },
-    ],
-
-    status: {
-      type: String,
-      enum: ["draft", "confirmed", "cancelled", "billed"],
-      default: "draft",
-    },
-
-    totalUntaxedAmount: { type: Number, default: 0 },
-    totalTaxAmount: { type: Number, default: 0 },
-    totalAmount: { type: Number, default: 0 },
-  },
-  { timestamps: true }
-);
-
-// Calculate totals before save
-purchaseOrderSchema.pre("save", async function (next) {
-  let untaxed = 0;
-  let tax = 0;
-  for (const item of this.items) {
-    const lineUntaxed = item.unitPrice * item.quantity;
-    const lineTax = (lineUntaxed * (item.taxRate || 0)) / 100;
-    untaxed += lineUntaxed;
-    tax += lineTax;
-  }
-  this.totalUntaxedAmount = untaxed;
-  this.totalTaxAmount = tax;
-  this.totalAmount = untaxed + tax;
-  next();
+const PurchaseOrder = sequelize.define('PurchaseOrder', {
+  vendor_id: { type: DataTypes.INTEGER, allowNull: false },
+  items: { type: DataTypes.JSON, allowNull: false, defaultValue: [] },
+  status: { type: DataTypes.ENUM('draft', 'confirmed', 'cancelled', 'billed'), defaultValue: 'draft' },
+  total_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+  expected_date: { type: DataTypes.DATE, allowNull: true },
+  po_number: { type: DataTypes.STRING, allowNull: true, unique: true },
+  po_date: { type: DataTypes.DATE, allowNull: true, defaultValue: DataTypes.NOW },
+  reference: { type: DataTypes.STRING, allowNull: true },
+}, {
+  timestamps: true,
+  tableName: 'purchase_orders',
+  underscored: true,
 });
 
-module.exports = mongoose.model("PurchaseOrder", purchaseOrderSchema);
+PurchaseOrder.beforeSave(async (po) => {
+  const Tax = require('./Tax');
+  let total = 0;
+  for (const item of po.items || []) {
+    let taxAmount = 0;
+    if (item?.tax) {
+      const taxDoc = await Tax.findByPk(item.tax);
+      if (taxDoc) {
+        const base = (Number(item.unitPrice) || 0) * (Number(item.quantity) || 0);
+        if (taxDoc.method === 'Percentage') taxAmount = (base * (Number(taxDoc.value) || 0)) / 100;
+        else if (taxDoc.method === 'Fixed') taxAmount = Number(taxDoc.value) || 0;
+      }
+    }
+    total += (Number(item.unitPrice) || 0) * (Number(item.quantity) || 0) + taxAmount;
+  }
+  po.total_amount = total;
+});
+
+module.exports = PurchaseOrder;

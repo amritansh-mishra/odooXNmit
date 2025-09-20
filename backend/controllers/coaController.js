@@ -1,46 +1,54 @@
+const { Op, fn, col, literal } = require('sequelize');
 const CoA = require('../models/CoA');
 
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10), 1), 100);
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
+}
+
+function mapBodyToModel(body) {
+  return {
+    account_name: body.accountName ?? body.account_name,
+    type: body.type,
+    description: body.description,
+    is_active: body.isActive ?? body.is_active,
+    archived_at: body.archivedAt ?? body.archived_at,
+  };
 }
 
 // GET /api/master/coa
 exports.listAccounts = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req);
+    const { page, limit, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
     const type = req.query.type; // Asset | Liability | Expense | Income | Equity
-    const isActive = req.query.isActive === 'false' ? false : true; // default true
+    const isActive = req.query.isActive === 'false' ? false : true;
 
-    let filter = {};
-    if (type) {
-      filter.type = type;   // e.g. "Asset"
-    }
-    filter.isActive = isActive; // true/false
-
+    const where = { ...(type ? { type } : {}), ...(isActive !== undefined ? { is_active: isActive } : {}) };
     if (q) {
-      filter.$or = [
-        { accountName: new RegExp(q, 'i') },  // i = case insensitive, Cash, cash same
-        { description: new RegExp(q, 'i') },
+      where[Op.or] = [
+        { account_name: { [Op.like]: `%${q}%` } },
+        { description: { [Op.like]: `%${q}%` } },
       ];
     }
 
-    const [items, total] = await Promise.all([
-      CoA.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
-      CoA.countDocuments(filter),
-    ]);
+    const { rows, count } = await CoA.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit,
+      offset,
+    });
 
-    res.json({ success: true, page, limit, total, items });
+    res.json({ success: true, page, limit, total: count, items: rows });
   } catch (err) { next(err); }
 };
 
 // GET /api/master/coa/:id
 exports.getAccount = async (req, res, next) => {
   try {
-    const doc = await CoA.findById(req.params.id);
+    const doc = await CoA.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Account not found' });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
@@ -49,7 +57,8 @@ exports.getAccount = async (req, res, next) => {
 // POST /api/master/coa
 exports.createAccount = async (req, res, next) => {
   try {
-    const doc = await CoA.create(req.body);
+    const payload = mapBodyToModel(req.body);
+    const doc = await CoA.create(payload);
     res.status(201).json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
@@ -57,8 +66,9 @@ exports.createAccount = async (req, res, next) => {
 // PUT /api/master/coa/:id
 exports.updateAccount = async (req, res, next) => {
   try {
-    const doc = await CoA.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    const doc = await CoA.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Account not found' });
+    await doc.update(mapBodyToModel(req.body));
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
@@ -66,12 +76,9 @@ exports.updateAccount = async (req, res, next) => {
 // PATCH /api/master/coa/:id/archive
 exports.archiveAccount = async (req, res, next) => {
   try {
-    const doc = await CoA.findByIdAndUpdate(
-      req.params.id,
-      { isActive: false, archivedAt: new Date() },
-      { new: true }
-    );
+    const doc = await CoA.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Account not found' });
+    await doc.update({ is_active: false, archived_at: new Date() });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
@@ -79,38 +86,32 @@ exports.archiveAccount = async (req, res, next) => {
 // PATCH /api/master/coa/:id/unarchive
 exports.unarchiveAccount = async (req, res, next) => {
   try {
-    const doc = await CoA.findByIdAndUpdate(
-      req.params.id,
-      { isActive: true, archivedAt: null },
-      { new: true }
-    );
+    const doc = await CoA.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Account not found' });
+    await doc.update({ is_active: true, archived_at: null });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
 
 // POST /api/master/coa/seed-defaults
-// Creates default accounts if they don't exist: Sales Income (Income), Purchase Expense (Expense), Other Expense (Expense)
 exports.seedDefaults = async (req, res, next) => {
   try {
     const defaults = [
-      { accountName: 'Sales Income A/c', type: 'Income', description: 'Default sales revenue account', isActive: true },
-      { accountName: 'Purchase Expense A/c', type: 'Expense', description: 'Default purchase expense account', isActive: true },
-      { accountName: 'Other Expense A/c', type: 'Expense', description: 'Default miscellaneous expense account', isActive: true },
+      { account_name: 'Sales Income A/c', type: 'Income', description: 'Default sales revenue account', is_active: true },
+      { account_name: 'Purchase Expense A/c', type: 'Expense', description: 'Default purchase expense account', is_active: true },
+      { account_name: 'Other Expense A/c', type: 'Expense', description: 'Default miscellaneous expense account', is_active: true },
     ];
     const results = [];
     for (const def of defaults) {
-      const existing = await CoA.findOne({ accountName: def.accountName });
+      let existing = await CoA.findOne({ where: { account_name: def.account_name } });
       if (existing) {
-        if (!existing.isActive) {
-          existing.isActive = true;
-          existing.archivedAt = null;
-          await existing.save();
+        if (!existing.is_active) {
+          await existing.update({ is_active: true, archived_at: null });
         }
-        results.push({ accountName: def.accountName, status: 'exists', id: existing._id });
+        results.push({ accountName: def.account_name, status: 'exists', id: existing.id });
       } else {
         const created = await CoA.create(def);
-        results.push({ accountName: def.accountName, status: 'created', id: created._id });
+        results.push({ accountName: def.account_name, status: 'created', id: created.id });
       }
     }
     res.status(201).json({ success: true, results });
@@ -118,17 +119,18 @@ exports.seedDefaults = async (req, res, next) => {
 };
 
 // GET /api/master/coa/health
-// Returns whether minimal required accounts exist and are active and some stats
 exports.health = async (req, res, next) => {
   try {
-    const activeIncome = await CoA.findOne({ type: 'Income', isActive: true }).lean();
-    const activeExpense = await CoA.findOne({ type: 'Expense', isActive: true }).lean();
-    const salesIncome = await CoA.findOne({ accountName: /Sales Income/i, isActive: true }).lean();
-    const purchaseExpense = await CoA.findOne({ accountName: /Purchase Expense/i, isActive: true }).lean();
+    const activeIncome = await CoA.findOne({ where: { type: 'Income', is_active: true } });
+    const activeExpense = await CoA.findOne({ where: { type: 'Expense', is_active: true } });
+    const salesIncome = await CoA.findOne({ where: { account_name: { [Op.like]: '%Sales Income%' }, is_active: true } });
+    const purchaseExpense = await CoA.findOne({ where: { account_name: { [Op.like]: '%Purchase Expense%' }, is_active: true } });
 
-    const byType = await CoA.aggregate([
-      { $group: { _id: { type: '$type', isActive: '$isActive' }, count: { $sum: 1 } } },
-    ]);
+    const byType = await CoA.findAll({
+      attributes: [ 'type', 'is_active', [fn('COUNT', literal('*')), 'count'] ],
+      group: ['type', 'is_active'],
+      raw: true,
+    });
 
     res.json({
       success: true,
@@ -138,7 +140,7 @@ exports.health = async (req, res, next) => {
         hasSalesIncomeAccount: !!salesIncome,
         hasPurchaseExpenseAccount: !!purchaseExpense,
       },
-      stats: byType.map(r => ({ type: r._id.type, isActive: r._id.isActive, count: r.count })),
+      stats: byType.map(r => ({ type: r.type, isActive: !!r.is_active, count: Number(r.count) })),
     });
   } catch (err) { next(err); }
 };

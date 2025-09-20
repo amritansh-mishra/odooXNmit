@@ -1,8 +1,13 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../db/db');
 
-const counterSchema = new mongoose.Schema({
-  key: { type: String, required: true, unique: true },
-  seq: { type: Number, default: 0 },
+const Counter = sequelize.define('Counter', {
+  key: { type: DataTypes.STRING, allowNull: false, unique: true },
+  seq: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+}, {
+  timestamps: true,
+  tableName: 'counters',
+  underscored: true,
 });
 
-module.exports = mongoose.model('Counter', counterSchema);
+module.exports = Counter;

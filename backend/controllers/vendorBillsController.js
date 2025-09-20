@@ -1,189 +1,179 @@
+const { Op } = require('sequelize');
 const VendorBill = require('../models/VendorBills');
 const Product = require('../models/Product');
 const CoA = require('../models/CoA');
-const Partner = require('../models/Partner');
+const Contact = require('../models/Contact');
 const Counter = require('../models/Counter');
 
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10), 1), 100);
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
 }
 
 async function getNextBillNumber() {
   const year = new Date().getFullYear();
   const key = `vb-${year}`;
-  const doc = await Counter.findOneAndUpdate(
-    { key },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true }
-  );
-  const seq = doc.seq || 1;
-  return `Bill/${year}/${String(seq).padStart(4, '0')}`;
+  const [ctr] = await Counter.findOrCreate({ where: { key }, defaults: { seq: 0 } });
+  await ctr.update({ seq: ctr.seq + 1 });
+  return `Bill/${year}/${String(ctr.seq).padStart(4, '0')}`;
 }
 
 async function resolveDefaultAccount() {
-  let acc = await CoA.findOne({ accountName: /Purchase Expense/i, isActive: true });
-  if (!acc) acc = await CoA.findOne({ type: 'Expense', isActive: true });
-  return acc ? acc._id : null;
+  const acc = await CoA.findOne({ where: { type: 'Expense', is_active: true } });
+  return acc ? acc.id : null;
 }
 
 exports.listBills = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req);
+    const { page, limit, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
     const status = req.query.status;
     const vendor = req.query.vendor;
 
-    const filter = {};
-    if (status) filter.status = status;
-    if (vendor) filter.vendor = vendor;
-    if (q) filter.billNumber = new RegExp(q, 'i');
+    const where = {};
+    if (status) where.status = status;
+    if (vendor) where.vendor_id = vendor;
+    if (q) where.bill_number = { [Op.like]: `%${q}%` };
 
-    const [items, total] = await Promise.all([
-      VendorBill.find(filter)
-        .populate('vendor', 'name email')
-        .populate('items.product', 'name hsnCode')
-        .populate('items.account', 'accountName type')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      VendorBill.countDocuments(filter),
-    ]);
+    const { rows, count } = await VendorBill.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit,
+      offset,
+    });
 
-    res.json({ success: true, page, limit, total, items });
+    res.json({ success: true, page, limit, total: count, items: rows });
   } catch (err) { next(err); }
 };
 
-
 exports.getBill = async (req, res, next) => {
   try {
-    const doc = await VendorBill.findById(req.params.id)
-      .populate('vendor', 'name email')
-      .populate('items.product', 'name hsnCode')
-      .populate('items.account', 'accountName type');
+    const doc = await VendorBill.findByPk(req.params.id);
     if (!doc) return res.status(404).json({ message: 'Vendor Bill not found' });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
 
-
 exports.createBill = async (req, res, next) => {
   try {
-    const vendorDoc = await Partner.findById(req.body.vendor);
+    const vendorId = req.body.vendor || req.body.vendor_id;
+    const vendorDoc = await Contact.findByPk(vendorId);
     if (!vendorDoc) return res.status(400).json({ message: 'Invalid vendor' });
 
-    // default account if missing
     const defaultAccountId = await resolveDefaultAccount();
-    //Fill HSN from product and default account if missing
-    if (Array.isArray(req.body.items)) {
-      let missingAccount = false;
-      for (const line of req.body.items) {
-        if (line.product) {
-          const prod = await Product.findById(line.product).lean(); //.lean() returns a plain JavaScript object instead of a Mongoose document (faster and simpler for reading).
-          if (prod) {
-            if (!line.unitPrice && prod.purchasePrice != null) line.unitPrice = prod.purchasePrice;
-            if (!line.hsnCode && prod.hsnCode) line.hsnCode = prod.hsnCode;
-          }
-        }
-        if (!line.account) {
-          if (defaultAccountId) line.account = defaultAccountId; else missingAccount = true;
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    for (const line of items) {
+      if (line.product) {
+        const prod = await Product.findByPk(line.product);
+        if (prod) {
+          if (line.unitPrice == null && prod.purchase_price != null) line.unitPrice = Number(prod.purchase_price);
+          if (!line.hsnCode && prod.hsn_code) line.hsnCode = prod.hsn_code;
         }
       }
-      if (missingAccount) {
-        return res.status(400).json({ message: 'No active Expense account configured. Please create/activate an Expense account or provide an account for each item.' });
-      }
+      if (!line.account && defaultAccountId) line.account = defaultAccountId;
     }
 
-    const billNumber = req.body.billNumber || await getNextBillNumber();
+    const bill_number = req.body.billNumber || req.body.bill_number || await getNextBillNumber();
 
-    const doc = await VendorBill.create({ ...req.body, billNumber });
+    const doc = await VendorBill.create({
+      bill_number,
+      reference: req.body.reference || null,
+      purchase_order_id: req.body.purchaseOrder || req.body.purchase_order_id || null,
+      vendor_id: vendorId,
+      invoice_date: req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date(),
+      due_date: req.body.dueDate ? new Date(req.body.dueDate) : new Date(Date.now() + 30*24*60*60*1000),
+      status: 'draft',
+      items,
+    });
     res.status(201).json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
 
-
 exports.updateBill = async (req, res, next) => {
   try {
-    const bill = await VendorBill.findById(req.params.id);
+    const bill = await VendorBill.findByPk(req.params.id);
     if (!bill) return res.status(404).json({ message: 'Vendor Bill not found' });
     if (bill.status !== 'draft') return res.status(400).json({ message: 'Only draft bill can be updated' });
 
     const defaultAccountId = await resolveDefaultAccount();
-    if (Array.isArray(req.body.items)) {
-      let missingAccount = false;
-      for (const line of req.body.items) {
-        if (line.product) {
-          const prod = await Product.findById(line.product).lean();
-          if (prod) {
-            if (line.unitPrice == null && prod.purchasePrice != null) line.unitPrice = prod.purchasePrice;
-            if (!line.hsnCode && prod.hsnCode) line.hsnCode = prod.hsnCode;
-          }
-        }
-        if (!line.account) {
-          if (defaultAccountId) line.account = defaultAccountId; else missingAccount = true;
+    const items = Array.isArray(req.body.items) ? req.body.items : bill.items;
+    for (const line of items) {
+      if (line.product) {
+        const prod = await Product.findByPk(line.product);
+        if (prod) {
+          if (line.unitPrice == null && prod.purchase_price != null) line.unitPrice = Number(prod.purchase_price);
+          if (!line.hsnCode && prod.hsn_code) line.hsnCode = prod.hsn_code;
         }
       }
-      if (missingAccount) {
-        return res.status(400).json({ message: 'No active Expense account configured. Please create/activate an Expense account or provide an account for each item.' });
-      }
+      if (!line.account && defaultAccountId) line.account = defaultAccountId;
     }
 
-    Object.assign(bill, req.body);
-    await bill.save();
+    await bill.update({
+      vendor_id: req.body.vendor || req.body.vendor_id || bill.vendor_id,
+      purchase_order_id: req.body.purchaseOrder || req.body.purchase_order_id || bill.purchase_order_id,
+      reference: req.body.reference ?? bill.reference,
+      invoice_date: req.body.invoiceDate ? new Date(req.body.invoiceDate) : bill.invoice_date,
+      due_date: req.body.dueDate ? new Date(req.body.dueDate) : bill.due_date,
+      items,
+    });
     res.json({ success: true, item: bill });
   } catch (err) { next(err); }
 };
 
-// GET /api/vendor-bills/:id/print
 exports.printBill = async (req, res, next) => {
   try {
-    const bill = await VendorBill.findById(req.params.id)
-      .populate('vendor', 'name email mobile')
-      .populate('items.product', 'name hsnCode')
-      .populate('items.account', 'accountName type');
+    const bill = await VendorBill.findByPk(req.params.id);
     if (!bill) return res.status(404).json({ message: 'Vendor Bill not found' });
 
-    const items = bill.items.map(l => ({
-      product: l.product,
-      account: l.account,
-      hsnCode: l.hsnCode,
-      quantity: l.quantity,
-      unitPrice: l.unitPrice,
-      taxRate: l.taxRate || 0,
-      lineUntaxed: l.lineUntaxed ?? (l.unitPrice * l.quantity),
-      lineTax: l.lineTax ?? ((l.unitPrice * l.quantity * (l.taxRate || 0)) / 100),
-      lineTotal: l.lineTotal ?? (l.unitPrice * l.quantity * (1 + (l.taxRate || 0)/100)),
-    }));
+    const items = bill.items;
+    const enriched = [];
+    for (const it of items) {
+      let product = null;
+      if (it.product) product = await Product.findByPk(it.product);
+      const qty = Number(it.quantity) || 0;
+      const unit = Number(it.unitPrice) || 0;
+      const rate = Number(it.taxRate || 0);
+      enriched.push({
+        product: product ? { id: product.id, name: product.name } : null,
+        hsnCode: it.hsnCode,
+        account: it.account,
+        quantity: qty,
+        unitPrice: unit,
+        taxRate: rate,
+        lineUntaxed: unit * qty,
+        lineTax: (unit * qty * rate) / 100,
+        lineTotal: unit * qty * (1 + rate / 100),
+      });
+    }
 
     const payload = {
-      billNumber: bill.billNumber,
-      invoiceDate: bill.invoiceDate,
-      dueDate: bill.dueDate,
+      billNumber: bill.bill_number,
+      invoiceDate: bill.invoice_date,
+      dueDate: bill.due_date,
       reference: bill.reference || null,
       status: bill.status,
-      vendor: bill.vendor,
-      items,
+      vendor: bill.vendor_id,
+      items: enriched,
       totals: {
-        untaxed: bill.totalUntaxedAmount,
-        tax: bill.totalTaxAmount,
-        total: bill.totalAmount,
+        untaxed: Number(bill.total_untaxed_amount) || 0,
+        tax: Number(bill.total_tax_amount) || 0,
+        total: Number(bill.total_amount) || 0,
       },
       payments: {
-        paidCash: bill.paidCash || 0,
-        paidBank: bill.paidBank || 0,
-        amountDue: bill.amountDue || 0,
+        paidCash: Number(bill.paid_cash) || 0,
+        paidBank: Number(bill.paid_bank) || 0,
+        amountDue: Number(bill.amount_due) || 0,
       }
     };
     if ((req.query.format || '').toLowerCase() === 'pdf') {
       const PDFDocument = require('pdfkit');
       const doc = new PDFDocument({ size: 'A4', margin: 36 });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename=${bill.billNumber}.pdf`);
+      res.setHeader('Content-Disposition', `inline; filename=${bill.bill_number}.pdf`);
       doc.pipe(res);
 
-      // Header
       doc.fontSize(18).text('Vendor Bill', { align: 'center' }).moveDown(0.5);
       doc.fontSize(12)
         .text(`Bill No: ${payload.billNumber}`)
@@ -192,15 +182,13 @@ exports.printBill = async (req, res, next) => {
         .text(`Status: ${payload.status}`)
         .moveDown(0.5);
 
-      // Vendor
       doc.fontSize(12).text('Vendor:', { underline: true });
-      const vend = payload.vendor || {};
-      doc.text(`Name: ${vend.name || ''}`)
-         .text(`Email: ${vend.email || ''}`)
-         .text(`Mobile: ${vend.mobile || ''}`)
+      const vend = await Contact.findByPk(payload.vendor);
+      doc.text(`Name: ${vend?.name || ''}`)
+         .text(`Email: ${vend?.email || ''}`)
+         .text(`Mobile: ${vend?.mobile || ''}`)
          .moveDown(0.5);
 
-      // Items
       doc.fontSize(12).text('Items:', { underline: true }).moveDown(0.25);
       payload.items.forEach((it, idx) => {
         const p = it.product || {};
@@ -209,19 +197,11 @@ exports.printBill = async (req, res, next) => {
           .text(`Qty: ${it.quantity}  Unit: ${it.unitPrice}  Tax%: ${it.taxRate}  Line Total: ${it.lineTotal.toFixed(2)}`);
       });
 
-      // Totals
       doc.moveDown(0.75);
       doc.fontSize(12).text('Totals:', { underline: true });
       doc.text(`Untaxed: ${payload.totals.untaxed.toFixed(2)}`)
          .text(`Tax: ${payload.totals.tax.toFixed(2)}`)
-         .text(`Total: ${payload.totals.total.toFixed(2)}`)
-         .moveDown(0.5);
-
-      // Payments
-      doc.fontSize(12).text('Payments:', { underline: true });
-      doc.text(`Paid Cash: ${payload.payments.paidCash.toFixed(2)}`)
-         .text(`Paid Bank: ${payload.payments.paidBank.toFixed(2)}`)
-         .text(`Amount Due: ${payload.payments.amountDue.toFixed(2)}`);
+         .text(`Total: ${payload.totals.total.toFixed(2)}`);
 
       doc.end();
       return;
@@ -230,29 +210,24 @@ exports.printBill = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-
 exports.confirmBill = async (req, res, next) => {
   try {
-    const bill = await VendorBill.findById(req.params.id);
+    const bill = await VendorBill.findByPk(req.params.id);
     if (!bill) return res.status(404).json({ message: 'Vendor Bill not found' });
     if (bill.status !== 'draft') return res.status(400).json({ message: 'Only draft bill can be confirmed' });
-    bill.status = 'confirmed';
-    await bill.save();
+    await bill.update({ status: 'confirmed' });
     res.json({ success: true, item: bill });
   } catch (err) { next(err); }
 };
-
 
 exports.cancelBill = async (req, res, next) => {
   try {
-    const bill = await VendorBill.findById(req.params.id);
+    const bill = await VendorBill.findByPk(req.params.id);
     if (!bill) return res.status(404).json({ message: 'Vendor Bill not found' });
-    bill.status = 'cancelled';
-    await bill.save();
+    await bill.update({ status: 'cancelled' });
     res.json({ success: true, item: bill });
   } catch (err) { next(err); }
 };
-
 
 exports.addPayment = async (req, res, next) => {
   try {
@@ -261,12 +236,15 @@ exports.addPayment = async (req, res, next) => {
     const amt = Number(amount || 0);
     if (!(amt > 0)) return res.status(400).json({ message: 'Invalid amount' });
 
-    const bill = await VendorBill.findById(req.params.id);
+    const bill = await VendorBill.findByPk(req.params.id);
     if (!bill) return res.status(404).json({ message: 'Vendor Bill not found' });
     if (bill.status !== 'confirmed') return res.status(400).json({ message: 'Only confirmed bill can be paid' });
 
-    if (mode === 'Cash') bill.paidCash += amt; else bill.paidBank += amt;
-    await bill.save();
+    const patch = {};
+    if (mode === 'Cash') patch.paid_cash = Number(bill.paid_cash || 0) + amt;
+    else patch.paid_bank = Number(bill.paid_bank || 0) + amt;
+
+    await bill.update(patch);
     res.json({ success: true, item: bill });
   } catch (err) { next(err); }
 };

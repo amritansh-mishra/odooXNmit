@@ -1,27 +1,30 @@
+const { Op } = require('sequelize');
 const PurchaseOrder = require('../models/PurchaseOrder');
 const Product = require('../models/Product');
-const Partner = require('../models/Partner');
+const Contact = require('../models/Customer');
 const VendorBill = require('../models/VendorBills');
 const Counter = require('../models/Counter');
-const CoA = require('../models/CoA');
 
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10), 1), 100);
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
+  const offset = (page - 1) * limit;
+  return { page, limit, offset };
 }
 
 async function getNextBillNumber() {
   const year = new Date().getFullYear();
   const key = `vb-${year}`;
-  const doc = await Counter.findOneAndUpdate(
-    { key },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true }
-  );
-  const seq = doc.seq || 1;
-  return `Bill/${year}/${String(seq).padStart(4, '0')}`;
+  const [ctr] = await Counter.findOrCreate({ where: { key }, defaults: { seq: 0 } });
+  await ctr.update({ seq: ctr.seq + 1 });
+  return `Bill/${year}/${String(ctr.seq).padStart(4, '0')}`;
+}
+
+async function getNextPONumber() {
+  const key = 'po';
+  const [ctr] = await Counter.findOrCreate({ where: { key }, defaults: { seq: 0 } });
+  await ctr.update({ seq: ctr.seq + 1 });
+  return 'PO' + String(ctr.seq).padStart(5, '0');
 }
 
 async function resolveDefaultAccount() {
@@ -30,82 +33,71 @@ async function resolveDefaultAccount() {
   return acc ? acc._id : null;
 }
 
-async function getNextPONumber() {
-  const doc = await Counter.findOneAndUpdate(
-    { key: 'po' },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true }
-  );
-  const seq = doc.seq || 1;
-  // PO + 5-digit padded number: PO00001
-  return 'PO' + String(seq).padStart(5, '0');
-}
-
 // List POs
 exports.listPOs = async (req, res, next) => {
   try {
-    const { page, limit, skip } = parsePagination(req);
+    const { page, limit, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
     const status = req.query.status; // draft | confirmed | cancelled | billed
     const vendor = req.query.vendor; // vendor id
 
-    const filter = {};
-    if (status) filter.status = status;
-    if (vendor) filter.vendor = vendor;
-    if (q) {
-      filter.poNumber = new RegExp(q, 'i');
-    }
+    const where = {};
+    if (status) where.status = status;
+    if (vendor) where.vendor_id = vendor;
+    if (q) where.po_number = { [Op.like]: `%${q}%` };
 
-    const [items, total] = await Promise.all([
-      PurchaseOrder.find(filter)
-        .populate('vendor', 'name email')
-        .populate('items.product', 'name purchasePrice')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      PurchaseOrder.countDocuments(filter),
-    ]);
+    const { rows, count } = await PurchaseOrder.findAndCountAll({
+      where,
+      order: [['created_at', 'DESC']],
+      limit,
+      offset,
+    });
 
-    res.json({ success: true, page, limit, total, items });
+    res.json({ success: true, page, limit, total: count, items: rows });
   } catch (err) { next(err); }
 };
 
 // GET /api/purchase-orders/:id/print
 exports.printPO = async (req, res, next) => {
   try {
-    const po = await PurchaseOrder.findById(req.params.id)
-      .populate('vendor', 'name email mobile')
-      .populate('items.product', 'name hsnCode purchasePrice');
+    const po = await PurchaseOrder.findByPk(req.params.id);
     if (!po) return res.status(404).json({ message: 'Purchase Order not found' });
 
-    const items = po.items.map(l => ({
-      product: l.product,
-      quantity: l.quantity,
-      unitPrice: l.unitPrice,
-      taxRate: l.taxRate || 0,
-      lineUntaxed: l.unitPrice * l.quantity,
-      lineTax: (l.unitPrice * l.quantity * (l.taxRate || 0)) / 100,
-      lineTotal: l.unitPrice * l.quantity * (1 + (l.taxRate || 0)/100),
-    }));
+    const items = Array.isArray(po.items) ? po.items : [];
+    const enriched = [];
+    for (const l of items) {
+      let product = null;
+      if (l.product) product = await Product.findByPk(l.product);
+      const unitPrice = Number(l.unitPrice) || 0;
+      const qty = Number(l.quantity) || 0;
+      const taxRate = Number(l.taxRate || 0);
+      enriched.push({
+        product: product ? { id: product.id, name: product.name, hsnCode: product.hsn_code } : null,
+        quantity: qty,
+        unitPrice,
+        taxRate,
+        lineUntaxed: unitPrice * qty,
+        lineTax: (unitPrice * qty * taxRate) / 100,
+        lineTotal: unitPrice * qty * (1 + taxRate / 100),
+      });
+    }
 
     const payload = {
-      poNumber: po.poNumber,
-      poDate: po.poDate,
+      poNumber: po.po_number,
+      poDate: po.po_date,
       reference: po.reference || null,
       status: po.status,
-      vendor: po.vendor,
-      items,
+      vendor: po.vendor_id,
+      items: enriched,
       totals: {
-        untaxed: po.totalUntaxedAmount,
-        tax: po.totalTaxAmount,
-        total: po.totalAmount,
+        total: Number(po.total_amount) || 0,
       },
     };
     if ((req.query.format || '').toLowerCase() === 'pdf') {
       const PDFDocument = require('pdfkit');
       const doc = new PDFDocument({ size: 'A4', margin: 36 });
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename=${po.poNumber}.pdf`);
+      res.setHeader('Content-Disposition', `inline; filename=${po.po_number}.pdf`);
       doc.pipe(res);
 
       // Header
@@ -119,7 +111,7 @@ exports.printPO = async (req, res, next) => {
 
       // Vendor
       doc.fontSize(12).text('Vendor:', { underline: true });
-      const vend = payload.vendor || {};
+      const vend = await Contact.findByPk(payload.vendor);
       doc.text(`Name: ${vend.name || ''}`)
          .text(`Email: ${vend.email || ''}`)
          .text(`Mobile: ${vend.mobile || ''}`)
@@ -137,8 +129,8 @@ exports.printPO = async (req, res, next) => {
       // Totals
       doc.moveDown(0.75);
       doc.fontSize(12).text('Totals:', { underline: true });
-      doc.text(`Untaxed: ${payload.totals.untaxed.toFixed(2)}`)
-         .text(`Tax: ${payload.totals.tax.toFixed(2)}`)
+      doc.text(`Untaxed: ${payload.totals.total.toFixed(2)}`)
+         .text(`Tax: ${0.00.toFixed(2)}`)
          .text(`Total: ${payload.totals.total.toFixed(2)}`);
 
       doc.end();
@@ -151,9 +143,7 @@ exports.printPO = async (req, res, next) => {
 // Get one PO
 exports.getPO = async (req, res, next) => {
   try {
-    const po = await PurchaseOrder.findById(req.params.id)
-      .populate('vendor', 'name email')
-      .populate('items.product', 'name purchasePrice');
+    const po = await PurchaseOrder.findByPk(req.params.id);
     if (!po) return res.status(404).json({ message: 'Purchase Order not found' });
     res.json({ success: true, item: po });
   } catch (err) { next(err); }
@@ -163,21 +153,28 @@ exports.getPO = async (req, res, next) => {
 exports.createPO = async (req, res, next) => {
   try {
     // ensure vendor exists
-    const vendor = await Partner.findById(req.body.vendor);
+    const vendorId = req.body.vendor || req.body.vendor_id;
+    const vendor = await Contact.findByPk(vendorId);
     if (!vendor) return res.status(400).json({ message: 'Invalid vendor' });
 
     // Default unitPrice from product if not provided
-    if (Array.isArray(req.body.items)) {
-      for (const line of req.body.items) {
-        if (line.product && (line.unitPrice === undefined || line.unitPrice === null)) {
-          const prod = await Product.findById(line.product).lean();
-          if (prod) line.unitPrice = prod.purchasePrice || 0;
-        }
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    for (const line of items) {
+      if (line.product && (line.unitPrice === undefined || line.unitPrice === null)) {
+        const prod = await Product.findByPk(line.product);
+        if (prod) line.unitPrice = Number(prod.purchase_price) || 0;
       }
     }
 
-    const poNumber = req.body.poNumber || await getNextPONumber();
-    const payload = { ...req.body, poNumber };
+    const po_number = req.body.poNumber || req.body.po_number || await getNextPONumber();
+    const payload = {
+      vendor_id: vendorId,
+      items,
+      status: 'draft',
+      po_number,
+      reference: req.body.reference || null,
+      po_date: req.body.poDate ? new Date(req.body.poDate) : new Date(),
+    };
     const po = await PurchaseOrder.create(payload);
     res.status(201).json({ success: true, item: po });
   } catch (err) { next(err); }
@@ -186,22 +183,27 @@ exports.createPO = async (req, res, next) => {
 // Update PO (only when draft)
 exports.updatePO = async (req, res, next) => {
   try {
-    const po = await PurchaseOrder.findById(req.params.id);
+    const po = await PurchaseOrder.findByPk(req.params.id);
     if (!po) return res.status(404).json({ message: 'Purchase Order not found' });
     if (po.status !== 'draft') return res.status(400).json({ message: 'Only draft PO can be updated' });
 
-    // If items updated and some unitPrice missing, backfill from product
-    if (Array.isArray(req.body.items)) {
-      for (const line of req.body.items) {
+    const items = Array.isArray(req.body.items) ? req.body.items : po.items;
+    if (Array.isArray(items)) {
+      for (const line of items) {
         if (line.product && (line.unitPrice === undefined || line.unitPrice === null)) {
-          const prod = await Product.findById(line.product).lean();
-          if (prod) line.unitPrice = prod.purchasePrice || 0;
+          const prod = await Product.findByPk(line.product);
+          if (prod) line.unitPrice = Number(prod.purchase_price) || 0;
         }
       }
     }
 
-    Object.assign(po, req.body);
-    await po.save();
+    await po.update({
+      vendor_id: req.body.vendor || req.body.vendor_id || po.vendor_id,
+      items,
+      status: req.body.status || po.status,
+      reference: req.body.reference ?? po.reference,
+      po_date: req.body.poDate ? new Date(req.body.poDate) : po.po_date,
+    });
     res.json({ success: true, item: po });
   } catch (err) { next(err); }
 };
@@ -209,11 +211,10 @@ exports.updatePO = async (req, res, next) => {
 // Confirm PO
 exports.confirmPO = async (req, res, next) => {
   try {
-    const po = await PurchaseOrder.findById(req.params.id);
+    const po = await PurchaseOrder.findByPk(req.params.id);
     if (!po) return res.status(404).json({ message: 'Purchase Order not found' });
     if (po.status !== 'draft') return res.status(400).json({ message: 'Only draft PO can be confirmed' });
-    po.status = 'confirmed';
-    await po.save();
+    await po.update({ status: 'confirmed' });
     res.json({ success: true, item: po });
   } catch (err) { next(err); }
 };
@@ -221,11 +222,10 @@ exports.confirmPO = async (req, res, next) => {
 // Cancel PO
 exports.cancelPO = async (req, res, next) => {
   try {
-    const po = await PurchaseOrder.findById(req.params.id);
+    const po = await PurchaseOrder.findByPk(req.params.id);
     if (!po) return res.status(404).json({ message: 'Purchase Order not found' });
     if (po.status === 'billed') return res.status(400).json({ message: 'Billed PO cannot be cancelled' });
-    po.status = 'cancelled';
-    await po.save();
+    await po.update({ status: 'cancelled' });
     res.json({ success: true, item: po });
   } catch (err) { next(err); }
 };
@@ -233,39 +233,29 @@ exports.cancelPO = async (req, res, next) => {
 // Create Vendor Bill from PO
 exports.createBillFromPO = async (req, res, next) => {
   try {
-    const po = await PurchaseOrder.findById(req.params.id).populate('items.product', 'hsnCode purchasePrice');
+    const po = await PurchaseOrder.findByPk(req.params.id);
     if (!po) return res.status(404).json({ message: 'Purchase Order not found' });
     if (po.status !== 'confirmed') return res.status(400).json({ message: 'Only confirmed PO can be billed' });
 
-    const invoiceDate = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
-    const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : new Date(Date.now() + 30*24*60*60*1000);
+    const invoice_date = req.body.invoiceDate ? new Date(req.body.invoiceDate) : new Date();
+    const due_date = req.body.dueDate ? new Date(req.body.dueDate) : new Date(Date.now() + 30*24*60*60*1000);
 
-    const billNumber = await getNextBillNumber();
-    const defaultAccountId = await resolveDefaultAccount();
+    const bill_number = await getNextBillNumber();
 
-    const items = po.items.map((line) => ({
-      product: line.product?._id || line.product,
-      hsnCode: line.product?.hsnCode || null,
-      account: defaultAccountId,
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      taxRate: line.taxRate || 0,
-    }));
-
+    // Map items: keep unitPrice/hsnCode/taxRate as-is in JSON
     const bill = await VendorBill.create({
-      billNumber,
+      bill_number,
       reference: req.body.reference || null,
-      purchaseOrder: po._id,
-      vendor: po.vendor,
-      invoiceDate,
-      dueDate,
-      items,
+      purchase_order_id: po.id,
+      vendor_id: po.vendor_id,
+      invoice_date,
+      due_date,
       status: 'confirmed',
+      items: po.items,
     });
 
-    po.status = 'billed';
-    await po.save();
+    await po.update({ status: 'billed' });
 
-    res.status(201).json({ success: true, billId: bill._id, bill });
+    res.status(201).json({ success: true, billId: bill.id, bill });
   } catch (err) { next(err); }
 };

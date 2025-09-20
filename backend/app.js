@@ -41,6 +41,9 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Authentication routes (no auth required)
+app.use('/api/auth', require('./routes/auth'));
+
 // Re-enable Sequelize-ready routes
 app.use('/api/master/products', require('./routes/master.products'));
 app.use('/api/master/contacts', require('./routes/master.contacts'));

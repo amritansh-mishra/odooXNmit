@@ -1,49 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Plus, User } from 'lucide-react';
+import { ArrowLeft, Plus, User, Loader2 } from 'lucide-react';
 import ContactForm from './ContactForm';
+import contactsService from '../../services/contactsService';
 
 const ContactMaster = ({ onBack, onHome }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedContact, setSelectedContact] = useState(null);
   const [formMode, setFormMode] = useState('new');
-  const [contacts] = useState([
-    {
-      id: 1,
-      image: '/api/placeholder/40/40',
-      name: 'Azure Interior',
-      email: 'azure.interior24@example.com',
-      phone: '+91 9090909090'
-    },
-    {
-      id: 2,
-      image: '/api/placeholder/40/40',
-      name: 'Nimesh Pathak',
-      email: 'brandon.freeman55@example.com',
-      phone: '+91 9090909090'
-    },
-    {
-      id: 3,
-      image: '/api/placeholder/40/40',
-      name: 'Rajesh Kumar',
-      email: 'rajesh.kumar@example.com',
-      phone: '+91 8888888888'
-    },
-    {
-      id: 4,
-      image: '/api/placeholder/40/40',
-      name: 'Priya Sharma',
-      email: 'priya.sharma@example.com',
-      phone: '+91 7777777777'
-    },
-    {
-      id: 5,
-      image: '/api/placeholder/40/40',
-      name: 'Amit Singh',
-      email: 'amit.singh@example.com',
-      phone: '+91 6666666666'
-    }
-  ]);
+  const [contacts, setContacts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const handleContactClick = (contact) => {
     setSelectedContact(contact);
@@ -60,7 +27,62 @@ const ContactMaster = ({ onBack, onHome }) => {
   const handleBackFromForm = () => {
     setShowForm(false);
     setSelectedContact(null);
+    // Refresh contacts list after form submission
+    loadContacts();
   };
+
+  // Load contacts from API
+  const loadContacts = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await contactsService.getContacts();
+      setContacts(response.items || []);
+    } catch (err) {
+      console.error('Failed to load contacts:', err);
+      setError('Failed to load contacts. Using mock data for demo.');
+      // Fallback to mock data
+      setContacts([
+        {
+          id: 1,
+          name: 'Azure Interior',
+          email: 'azure.interior24@example.com',
+          mobile: '+91 9090909090'
+        },
+        {
+          id: 2,
+          name: 'Nimesh Pathak',
+          email: 'brandon.freeman55@example.com',
+          mobile: '+91 9090909090'
+        },
+        {
+          id: 3,
+          name: 'Rajesh Kumar',
+          email: 'rajesh.kumar@example.com',
+          mobile: '+91 8888888888'
+        },
+        {
+          id: 4,
+          name: 'Priya Sharma',
+          email: 'priya.sharma@example.com',
+          mobile: '+91 7777777777'
+        },
+        {
+          id: 5,
+          name: 'Amit Singh',
+          email: 'amit.singh@example.com',
+          mobile: '+91 6666666666'
+        }
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load contacts on component mount
+  useEffect(() => {
+    loadContacts();
+  }, []);
 
   // If showing form, render ContactForm
   if (showForm) {
@@ -153,9 +175,24 @@ const ContactMaster = ({ onBack, onHome }) => {
             <div>Phone</div>
           </div>
 
-          {/* Contact Rows */}
-          <div className="divide-y" style={{borderColor: 'var(--border)'}}>
-            {contacts.map((contact, index) => (
+          {/* Error Message */}
+          {error && (
+            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mx-4 mb-4">
+              <p className="text-yellow-800 text-sm">{error}</p>
+            </div>
+          )}
+
+          {/* Loading State */}
+          {loading ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="w-6 h-6 animate-spin mr-2" style={{color: 'var(--primary)'}} />
+              <span style={{color: 'var(--text-primary)'}}>Loading contacts...</span>
+            </div>
+          ) : (
+            <>
+              {/* Contact Rows */}
+              <div className="divide-y" style={{borderColor: 'var(--border)'}}>
+                {contacts.map((contact, index) => (
               <motion.div
                 key={contact.id}
                 initial={{ opacity: 0, x: -20 }}
@@ -199,14 +236,14 @@ const ContactMaster = ({ onBack, onHome }) => {
                 {/* Phone Column */}
                 <div className="flex items-center">
                   <span className="text-sm" style={{color: 'var(--text-secondary)'}}>
-                    {contact.phone}
+                    {contact.mobile || contact.phone}
                   </span>
                 </div>
               </motion.div>
             ))}
 
             {/* Empty rows to match the design */}
-            {Array.from({ length: 5 }).map((_, index) => (
+            {Array.from({ length: Math.max(0, 5 - contacts.length) }).map((_, index) => (
               <motion.div
                 key={`empty-${index}`}
                 initial={{ opacity: 0 }}
@@ -225,7 +262,9 @@ const ContactMaster = ({ onBack, onHome }) => {
                 <div></div>
               </motion.div>
             ))}
-          </div>
+              </div>
+            </>
+          )}
         </motion.div>
       </div>
     </div>

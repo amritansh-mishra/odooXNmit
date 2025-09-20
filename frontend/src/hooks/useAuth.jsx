@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { mockUser } from '../data/mockdata';
+import authService from '../services/authService';
 
 // Create context
 const AuthContext = createContext();
@@ -45,66 +46,71 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Check localStorage for existing session
+  // Check localStorage for existing session and validate with backend
   useEffect(() => {
-    const storedUser = localStorage.getItem('auth_user');
-    if (storedUser) {
-      try {
-        const parsed = JSON.parse(storedUser);
-        // Normalize role
-        const role = validRoles.has(parsed.role) ? parsed.role : 'admin';
-        const normalized = { ...mockUsers[role], ...parsed, role };
-        setUser(normalized);
-        localStorage.setItem('auth_user', JSON.stringify(normalized));
-      } catch (_) {
-        // Fallback to admin user if parse fails
-        const fallback = { ...mockUsers.admin };
-        setUser(fallback);
-        localStorage.setItem('auth_user', JSON.stringify(fallback));
+    const initializeAuth = async () => {
+      const storedUser = localStorage.getItem('auth_user');
+      const token = localStorage.getItem('auth_token');
+      
+      if (storedUser && token) {
+        try {
+          // Validate token with backend
+          const userData = await authService.getCurrentUser();
+          setUser(userData);
+          localStorage.setItem('auth_user', JSON.stringify(userData));
+        } catch (error) {
+          // Token invalid, clear storage and fallback to mock
+          console.warn('Token validation failed, falling back to mock auth:', error.message);
+          authService.logout();
+          const fallback = { ...mockUsers.admin };
+          setUser(fallback);
+          localStorage.setItem('auth_user', JSON.stringify(fallback));
+        }
+      } else {
+        // First load: seed with admin user for demo
+        const seed = { ...mockUsers.admin };
+        setUser(seed);
+        localStorage.setItem('auth_user', JSON.stringify(seed));
       }
-    } else {
-      // First load: seed with admin user for demo
-      const seed = { ...mockUsers.admin };
-      setUser(seed);
-      localStorage.setItem('auth_user', JSON.stringify(seed));
-    }
-    setIsLoading(false);
+      setIsLoading(false);
+    };
+
+    initializeAuth();
   }, []);
 
-  // Simulate login API
-  const login = async (email, password, role) => {
+  // Real login API
+  const login = async (loginId, password) => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // Ensure a valid role is always set
-    const effectiveRole = validRoles.has(role) ? role : 'admin';
-    const userData = { ...mockUsers[effectiveRole], email };
-    setUser(userData);
-    localStorage.setItem('auth_user', JSON.stringify(userData));
-    setIsLoading(false);
+    try {
+      const response = await authService.login(loginId, password);
+      const userData = await authService.getCurrentUser();
+      setUser(userData);
+      localStorage.setItem('auth_user', JSON.stringify(userData));
+      setIsLoading(false);
+      return response;
+    } catch (error) {
+      setIsLoading(false);
+      throw error;
+    }
   };
 
-  // Simulate signup API
+  // Real signup API
   const signup = async (userData) => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    const effectiveRole = validRoles.has(userData.role) ? userData.role : 'admin';
-    const newUser = {
-      ...mockUsers[effectiveRole],
-      name: userData.name,
-      email: userData.email,
-      role: effectiveRole
-    };
-    setUser(newUser);
-    localStorage.setItem('auth_user', JSON.stringify(newUser));
-    setIsLoading(false);
+    try {
+      const response = await authService.register(userData);
+      setIsLoading(false);
+      return response;
+    } catch (error) {
+      setIsLoading(false);
+      throw error;
+    }
   };
 
   // Logout function
   const logout = () => {
+    authService.logout();
     setUser(null);
-    localStorage.removeItem('auth_user');
   };
 
   return (

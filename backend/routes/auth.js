@@ -1,9 +1,9 @@
-
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const rateLimit = require('express-rate-limit');
+const { Op } = require('sequelize');
 const User = require('../models/User');
 const { requireAuth } = require('../middlewares/jwtAuth');
 
@@ -50,7 +50,11 @@ router.post(
 
     try {
       // if user already exists
-      let user = await User.findOne({ $or: [{ loginId }, { email }] });
+      let user = await User.findOne({ 
+        where: { 
+          [Op.or]: [{ loginId }, { email: email.toLowerCase() }] 
+        } 
+      });
       if (user) {
         return res.status(400).json({ message: 'User with this Login ID or Email already exists.' });
       }
@@ -60,8 +64,7 @@ router.post(
       const hashed = await bcrypt.hash(password, salt);
 
       // Save user (role defaults to invoicing)
-      user = new User({ name, loginId, email: email.toLowerCase(), password: hashed });
-      await user.save();
+      user = await User.create({ name, loginId, email: email.toLowerCase(), password: hashed });
 
       res.status(201).json({ message: 'User registered successfully!' });
     } catch (error) {
@@ -86,14 +89,21 @@ router.post(
     }
 
     const { loginId, password } = req.body;
+    
+    // Debug logging
+    console.log('Login attempt:', { loginId, passwordLength: password?.length });
 
     try {
-      const user = await User.findOne({ loginId });
+      const user = await User.findOne({ where: { loginId } });
+      console.log('User found:', user ? { id: user.id, loginId: user.loginId, name: user.name } : 'No user found');
+      
       if (!user) {
         return res.status(400).json({ message: 'Invalid credentials.' });
       }
 
       const isMatch = await bcrypt.compare(password, user.password);
+      console.log('Password match:', isMatch);
+      
       if (!isMatch) {
         return res.status(400).json({ message: 'Invalid credentials.' });
       }
@@ -126,7 +136,7 @@ router.post(
     }
 
     const { loginId } = req.body;
-    const user = await User.findOne({ loginId });
+    const user = await User.findOne({ where: { loginId } });
     // Always respond success to avoid user enumeration
     if (!user) {
       return res.status(200).json({ message: 'If a user with that login ID exists, a password reset link has been sent.' });
@@ -163,7 +173,7 @@ router.post(
       }
 
       const userId = decoded.sub;
-      const user = await User.findById(userId);
+      const user = await User.findByPk(userId);
       if (!user) {
         return res.status(400).json({ message: 'Invalid reset token' });
       }
@@ -181,7 +191,9 @@ router.post(
 
 // Get current user profile
 router.get('/me', requireAuth, async (req, res) => {
-  const user = await User.findById(req.user.id).select('-password');
+  const user = await User.findByPk(req.user.id, {
+    attributes: { exclude: ['password'] }
+  });
   res.json({ user });
 });
 

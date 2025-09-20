@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const VendorBill = require('../models/VendorBills');
 const Product = require('../models/Product');
 const CoA = require('../models/CoA');
-const Contact = require('../models/Contact');
+const Contact = require('../models/Customer');
 const Counter = require('../models/Counter');
 
 function parsePagination(req) {

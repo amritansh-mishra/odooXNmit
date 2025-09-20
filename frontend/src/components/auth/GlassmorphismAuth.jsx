@@ -144,7 +144,7 @@ const GlassmorphismAuth = () => {
 
     try {
       if (isLogin) {
-        await login(formData.loginId, formData.password);
+        await login(formData.loginId, formData.password, formData.role);
       } else {
         await signup({
           name: formData.name,
@@ -152,6 +152,7 @@ const GlassmorphismAuth = () => {
           email: formData.email,
           password: formData.password,
           reenteredPassword: formData.confirmPassword,
+          role: formData.role
         });
       }
     } catch (error) {
@@ -175,7 +176,11 @@ const GlassmorphismAuth = () => {
       password: 'Demo123!@'
     });
     setTimeout(async () => {
-      try { await login(`${role}user`, 'Demo123!@'); } catch { }
+      try { 
+        await login(`${role}user`, 'Demo123!@', role); 
+      } catch (error) {
+        console.error('Quick login failed:', error);
+      }
     }, 500);
   };
 

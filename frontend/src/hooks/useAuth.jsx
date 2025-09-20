@@ -15,6 +15,31 @@ export const useAuth = () => {
 
 const validRoles = new Set(['admin', 'accountant', 'contact']);
 
+// Role-specific mock users
+const mockUsers = {
+  admin: {
+    id: 1,
+    name: 'Admin User',
+    email: 'admin@demo.com',
+    role: 'admin',
+    avatar: null
+  },
+  accountant: {
+    id: 2,
+    name: 'Accountant User', 
+    email: 'accountant@demo.com',
+    role: 'accountant',
+    avatar: null
+  },
+  contact: {
+    id: 3,
+    name: 'Client User',
+    email: 'contact@demo.com', 
+    role: 'contact',
+    avatar: null
+  }
+};
+
 // AuthProvider component
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -27,19 +52,19 @@ export const AuthProvider = ({ children }) => {
       try {
         const parsed = JSON.parse(storedUser);
         // Normalize role
-        const role = validRoles.has(parsed.role) ? parsed.role : (mockUser.role || 'admin');
-        const normalized = { ...mockUser, ...parsed, role };
+        const role = validRoles.has(parsed.role) ? parsed.role : 'admin';
+        const normalized = { ...mockUsers[role], ...parsed, role };
         setUser(normalized);
         localStorage.setItem('auth_user', JSON.stringify(normalized));
       } catch (_) {
-        // Fallback to mock user if parse fails
-        const fallback = { ...mockUser };
+        // Fallback to admin user if parse fails
+        const fallback = { ...mockUsers.admin };
         setUser(fallback);
         localStorage.setItem('auth_user', JSON.stringify(fallback));
       }
     } else {
-      // First load: seed with mock user for demo (admin)
-      const seed = { ...mockUser };
+      // First load: seed with admin user for demo
+      const seed = { ...mockUsers.admin };
       setUser(seed);
       localStorage.setItem('auth_user', JSON.stringify(seed));
     }
@@ -49,13 +74,30 @@ export const AuthProvider = ({ children }) => {
   // Simulate login API
   const login = async (email, password, role) => {
     setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     // Ensure a valid role is always set
-    const effectiveRole = validRoles.has(role) ? role : (mockUser.role || 'admin');
-    const userData = { ...mockUser, email, role: effectiveRole };
+    const effectiveRole = validRoles.has(role) ? role : 'admin';
+    const userData = { ...mockUsers[effectiveRole], email };
     setUser(userData);
     localStorage.setItem('auth_user', JSON.stringify(userData));
+    setIsLoading(false);
+  };
+
+  // Simulate signup API
+  const signup = async (userData) => {
+    setIsLoading(true);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const effectiveRole = validRoles.has(userData.role) ? userData.role : 'admin';
+    const newUser = {
+      ...mockUsers[effectiveRole],
+      name: userData.name,
+      email: userData.email,
+      role: effectiveRole
+    };
+    setUser(newUser);
+    localStorage.setItem('auth_user', JSON.stringify(newUser));
     setIsLoading(false);
   };
 
@@ -66,7 +108,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, login, signup, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

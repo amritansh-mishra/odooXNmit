@@ -12,6 +12,7 @@ import Reports from './components/Reports';
 import ChartOfAccounts from './components/accounts/ChartOfAccounts';
 import SalesOrderMaster from './components/orders/SalesOrderMaster';
 import PurchaseOrderMaster from './components/orders/PurchaseOrderMaster';
+import ClientPortal from './components/Dashboard/ClientPortal';
 import './App.css';
 
 function AppContent() {
@@ -31,8 +32,9 @@ function AppContent() {
         <BrowserRouter>
           <Layout>
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/" element={<Navigate to={user?.role === 'contact' ? '/client' : '/dashboard'} replace />} />
               <Route path="/dashboard" element={<MonochromaticDashboard />} />
+              <Route path="/client" element={<ClientPortal user={user} />} />
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/payments" element={<PaymentPage onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
               <Route path="/contacts" element={<ContactMaster onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
@@ -42,7 +44,7 @@ function AppContent() {
               <Route path="/orders/sales" element={<SalesOrderMaster onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
               <Route path="/orders/purchase" element={<PurchaseOrderMaster onBack={() => window.history.back()} onHome={() => { window.location.href = '/dashboard'; }} />} />
               {/* Fallback */}
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="*" element={<Navigate to={user?.role === 'contact' ? '/client' : '/dashboard'} replace />} />
             </Routes>
           </Layout>
         </BrowserRouter>

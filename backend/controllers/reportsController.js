@@ -4,6 +4,7 @@ const Invoice = require('../models/CustomerInvoice');
 const VendorBill = require('../models/VendorBills');
 const StockLedger = require('../models/StockLedger');
 const CoA = require('../models/CoA');
+const Contact = require('../models/Customer');
 const { Op } = require('sequelize');
 
 // Helper: parse date range from query: support ?date=YYYY-MM-DD OR ?month=1-12&year=YYYY OR ?from=&to=
@@ -192,5 +193,207 @@ exports.getBalanceSheet = async (req, res, next) => {
       equation: 'Assets == Liabilities',
       check: Math.round((assetsTotal - liabilitiesTotal) * 100) / 100,
     });
+  } catch (err) { next(err); }
+};
+
+// Dashboard summary: quick stats, monthly chart, recent transactions, and totals
+exports.getDashboardSummary = async (req, res, next) => {
+  try {
+    const { Op } = require('sequelize');
+    const period = req.query.period || '30d';
+
+    const now = new Date();
+    let from = null;
+    if (period === '7d') from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    else if (period === '30d') from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    else if (period === '90d') from = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    else if (period === '1y') from = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+
+    const invWhere = { status: 'confirmed' };
+    const billWhere = { status: 'confirmed' };
+    if (from) {
+      invWhere.invoice_date = { [Op.gte]: from };
+      billWhere.invoice_date = { [Op.gte]: from };
+    }
+
+    const [invoices, bills, activeCustomers] = await Promise.all([
+      Invoice.findAll({ where: invWhere, raw: true }),
+      VendorBill.findAll({ where: billWhere, raw: true }),
+      Contact.count({ where: { is_active: true, type: { [Op.in]: ['Customer', 'Both'] } } }),
+    ]);
+
+    const sum = (arr, key) => arr.reduce((s, x) => s + Number(x[key] || 0), 0);
+
+    const revenue = sum(invoices, 'total_amount');
+    const purchases = sum(bills, 'total_amount');
+    const paidIn = sum(invoices, 'paid_cash') + sum(invoices, 'paid_bank');
+    const paidOut = sum(bills, 'paid_cash') + sum(bills, 'paid_bank');
+
+    // Compute previous period for growth rate (revenue)
+    let prevFrom = null;
+    if (from) {
+      const diffMs = now.getTime() - from.getTime();
+      prevFrom = new Date(from.getTime() - diffMs);
+    }
+
+    let growthRate = 0;
+    if (prevFrom) {
+      const prevInvWhere = { status: 'confirmed', invoice_date: { [Op.gte]: prevFrom, [Op.lt]: from } };
+      const prevInvoices = await Invoice.findAll({ where: prevInvWhere, raw: true });
+      const prevRevenue = sum(prevInvoices, 'total_amount');
+      if (prevRevenue > 0) growthRate = ((revenue - prevRevenue) / prevRevenue) * 100;
+      else if (revenue > 0) growthRate = 100;
+    }
+
+    // Helper to compute bucket sums and changes
+    const inRange = (d, start, end) => d >= start && d < end;
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    const nowStart = startOfDay(now);
+    const prevDayStart = new Date(nowStart.getTime() - dayMs);
+    const prev2DayStart = new Date(prevDayStart.getTime() - dayMs);
+
+    const weekStart = new Date(nowStart.getTime() - 7 * dayMs);
+    const prevWeekStart = new Date(weekStart.getTime() - 7 * dayMs);
+
+    const monthStart = new Date(nowStart.getTime() - 30 * dayMs);
+
+    const bucketSums = (rows, amountKey) => {
+      const getDate = (r) => new Date(r.invoice_date);
+
+      const last24Hours = rows
+        .filter(r => inRange(getDate(r), nowStart, new Date(nowStart.getTime() + dayMs)))
+        .reduce((s, r) => s + Number(r[amountKey] || 0), 0);
+
+      const prev24Hours = rows
+        .filter(r => inRange(getDate(r), prevDayStart, nowStart))
+        .reduce((s, r) => s + Number(r[amountKey] || 0), 0);
+
+      const last7Days = rows
+        .filter(r => inRange(getDate(r), weekStart, nowStart))
+        .reduce((s, r) => s + Number(r[amountKey] || 0), 0);
+
+      const prev7Days = rows
+        .filter(r => inRange(getDate(r), prevWeekStart, weekStart))
+        .reduce((s, r) => s + Number(r[amountKey] || 0), 0);
+
+      const last30Days = rows
+        .filter(r => inRange(getDate(r), monthStart, nowStart))
+        .reduce((s, r) => s + Number(r[amountKey] || 0), 0);
+
+      const change24h = prev24Hours === 0 ? (last24Hours > 0 ? 100 : 0) : ((last24Hours - prev24Hours) / prev24Hours) * 100;
+      const change7d = prev7Days === 0 ? (last7Days > 0 ? 100 : 0) : ((last7Days - prev7Days) / prev7Days) * 100;
+
+      return { last24Hours, last7Days, last30Days, change24h, change7d };
+    };
+
+    const totalInvoice = bucketSums(invoices, 'total_amount');
+    const totalPurchase = bucketSums(bills, 'total_amount');
+
+    // Payments: compute paidIn (invoices) and paidOut (bills) by buckets, then net
+    const paidInBuckets = bucketSums(
+      invoices.map(r => ({ ...r, paid_total: Number(r.paid_cash || 0) + Number(r.paid_bank || 0) })),
+      'paid_total'
+    );
+    const paidOutBuckets = bucketSums(
+      bills.map(r => ({ ...r, paid_total: Number(r.paid_cash || 0) + Number(r.paid_bank || 0) })),
+      'paid_total'
+    );
+
+    const totalPayment = {
+      last24Hours: Math.max(paidInBuckets.last24Hours - paidOutBuckets.last24Hours, 0),
+      last7Days: Math.max(paidInBuckets.last7Days - paidOutBuckets.last7Days, 0),
+      last30Days: Math.max(paidInBuckets.last30Days - paidOutBuckets.last30Days, 0),
+      change24h: paidInBuckets.change24h - paidOutBuckets.change24h,
+      change7d: paidInBuckets.change7d - paidOutBuckets.change7d,
+    };
+
+    // Monthly chart data (last 12 months)
+    const months = [];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({ key: `${d.getFullYear()}-${d.getMonth() + 1}`, label: `${monthNames[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`, sales: 0, purchases: 0 });
+    }
+
+    const monthKey = (d) => `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}`;
+    const monthMap = new Map(months.map(m => [m.key, m]));
+
+    for (const inv of invoices) {
+      const d = new Date(inv.invoice_date);
+      const key = monthKey(d);
+      if (monthMap.has(key)) monthMap.get(key).sales += Number(inv.total_amount || 0);
+    }
+    for (const vb of bills) {
+      const d = new Date(vb.invoice_date);
+      const key = monthKey(d);
+      if (monthMap.has(key)) monthMap.get(key).purchases += Number(vb.total_amount || 0);
+    }
+
+    const chartData = months.map(m => ({ month: m.label, sales: Math.round(m.sales), purchases: Math.round(m.purchases) }));
+
+    // Recent transactions
+    const [recentInvs, recentBills] = await Promise.all([
+      Invoice.findAll({ where: { status: 'confirmed' }, order: [['invoice_date', 'DESC']], limit: 10, raw: true }),
+      VendorBill.findAll({ where: { status: 'confirmed' }, order: [['invoice_date', 'DESC']], limit: 10, raw: true }),
+    ]);
+
+    const customerIds = Array.from(new Set(recentInvs.map(x => x.customer_id).filter(Boolean)));
+    const vendorIds = Array.from(new Set(recentBills.map(x => x.vendor_id).filter(Boolean)));
+
+    const [customers, vendors] = await Promise.all([
+      Contact.findAll({ where: { id: customerIds }, raw: true }),
+      Contact.findAll({ where: { id: vendorIds }, raw: true }),
+    ]);
+    const custMap = new Map(customers.map(c => [c.id, c]));
+    const vendMap = new Map(vendors.map(v => [v.id, v]));
+
+    const recentTransactions = [
+      ...recentInvs.map(i => ({
+        id: `INV-${i.id}`,
+        type: 'income',
+        description: `Invoice #${i.invoice_number || i.id}`,
+        date: new Date(i.invoice_date).toISOString(),
+        category: custMap.get(i.customer_id)?.name || 'Customer',
+        amount: Number(i.total_amount || 0),
+        status: i.payment_status === 'Paid' ? 'completed' : 'pending',
+        method: i.payment_mode || 'Bank',
+        reference: i.reference || '',
+        balance: Number(i.amount_due || 0),
+      })),
+      ...recentBills.map(b => ({
+        id: `BILL-${b.id}`,
+        type: 'expense',
+        description: `Vendor Bill #${b.bill_number || b.id}`,
+        date: new Date(b.invoice_date).toISOString(),
+        category: vendMap.get(b.vendor_id)?.name || 'Vendor',
+        amount: Number(b.total_amount || 0),
+        status: Number(b.amount_due || 0) === 0 ? 'completed' : 'pending',
+        method: b.payment_mode || 'Bank',
+        reference: b.reference || '',
+        balance: Number(b.amount_due || 0),
+      })),
+    ]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 10)
+      .map(t => ({ ...t, date: new Date(t.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) }));
+
+    const data = {
+      quickStats: {
+        totalRevenue: revenue,
+        activeClients: activeCustomers,
+        growthRate: growthRate,
+      },
+      timeBasedStats: {
+        totalInvoice,
+        totalPurchase,
+        totalPayment,
+      },
+      chartData,
+      recentTransactions,
+    };
+
+    res.json({ success: true, data });
   } catch (err) { next(err); }
 };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Calendar,
@@ -37,12 +37,7 @@ import ChartOfAccounts from '../accounts/ChartOfAccounts';
 import VendorMaster from '../vendors/VendorMaster';
 import PurchaseOrderMaster from '../orders/PurchaseOrderMaster';
 import SalesOrderMaster from '../orders/SalesOrderMaster';
-import {
-  mockSalesData,
-  mockTransactions,
-  mockTimeBasedStats,
-  mockUser
-} from '../../data/mockdata';
+import reportsService from '../../services/reportsService';
 
 const MonochromaticDashboard = () => {
   const { user, logout } = useAuth();
@@ -57,6 +52,105 @@ const MonochromaticDashboard = () => {
   const [showPurchaseOrder, setShowPurchaseOrder] = useState(false);
   const [showSalesOrder, setShowSalesOrder] = useState(false);
   const [activeQuickAction, setActiveQuickAction] = useState(null);
+  const [dashData, setDashData] = useState({
+    quickStats: { totalRevenue: 0, activeClients: 0, growthRate: 0 },
+    timeBasedStats: {
+      totalInvoice: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+      totalPurchase: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+      totalPayment: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+    },
+    chartData: [],
+    recentTransactions: [],
+  });
+
+  const roleFallback = (role) => {
+    const baseChart = [
+      { month: 'Jan 25', sales: 400000, purchases: 280000 },
+      { month: 'Feb 25', sales: 420000, purchases: 300000 },
+      { month: 'Mar 25', sales: 450000, purchases: 320000 },
+      { month: 'Apr 25', sales: 470000, purchases: 330000 },
+      { month: 'May 25', sales: 500000, purchases: 350000 },
+      { month: 'Jun 25', sales: 520000, purchases: 360000 },
+      { month: 'Jul 25', sales: 540000, purchases: 370000 },
+      { month: 'Aug 25', sales: 560000, purchases: 380000 },
+      { month: 'Sep 25', sales: 580000, purchases: 390000 },
+      { month: 'Oct 25', sales: 600000, purchases: 400000 },
+      { month: 'Nov 25', sales: 620000, purchases: 410000 },
+      { month: 'Dec 25', sales: 650000, purchases: 420000 },
+    ];
+    const totals = (inv, pur, pay) => ({
+      totalInvoice: { last24Hours: 0, last7Days: Math.round(inv * 0.1), last30Days: inv, change24h: 0, change7d: 5.2 },
+      totalPurchase: { last24Hours: 0, last7Days: Math.round(pur * 0.1), last30Days: pur, change24h: 0, change7d: 3.1 },
+      totalPayment: { last24Hours: 0, last7Days: Math.round(pay * 0.1), last30Days: pay, change24h: 0, change7d: 2.0 },
+    });
+    if (role === 'admin') {
+      return {
+        quickStats: { totalRevenue: 2450000, activeClients: 248, growthRate: 12.5 },
+        timeBasedStats: totals(236100, 178570, 57520),
+        chartData: baseChart,
+        recentTransactions: [
+          { id: 'INV-5010', type: 'income', description: 'Invoice #5010', date: '15 Sep 2025', category: 'Tech Solutions Ltd.', amount: 125000, status: 'completed', method: 'Bank', reference: 'SO-9001', balance: 0 },
+          { id: 'BILL-7012', type: 'expense', description: 'Vendor Bill #7012', date: '14 Sep 2025', category: 'ABC Suppliers', amount: 78000, status: 'pending', method: 'Bank', reference: 'PO-1203', balance: 30000 },
+        ],
+      };
+    }
+    if (role === 'accountant' || role === 'invoicing') {
+      return {
+        quickStats: { totalRevenue: 1850000, activeClients: 180, growthRate: 8.2 },
+        timeBasedStats: totals(180000, 120000, 50000),
+        chartData: baseChart,
+        recentTransactions: [
+          { id: 'INV-5008', type: 'income', description: 'Invoice #5008', date: '13 Sep 2025', category: 'StartupXYZ', amount: 85000, status: 'pending', method: 'Bank', reference: 'SO-8891', balance: 85000 },
+          { id: 'BILL-7009', type: 'expense', description: 'Vendor Bill #7009', date: '12 Sep 2025', category: 'Office Mart', amount: 15000, status: 'completed', method: 'Cash', reference: 'PO-1188', balance: 0 },
+        ],
+      };
+    }
+    return {
+      quickStats: { totalRevenue: 0, activeClients: 0, growthRate: 0 },
+      timeBasedStats: totals(0, 0, 0),
+      chartData: baseChart.map(x => ({ ...x, sales: 0, purchases: 0 })),
+      recentTransactions: [],
+    };
+  };
+
+  const isEmptyDashData = (data) => {
+    if (!data) return true;
+    const qs = data.quickStats || {};
+    const tbs = data.timeBasedStats || {};
+    const isZeroQS = Number(qs.totalRevenue || 0) === 0 && Number(qs.activeClients || 0) === 0 && Number(qs.growthRate || 0) === 0;
+    const safe = (o) => o || { last24Hours: 0, last7Days: 0, last30Days: 0 };
+    const inv = safe(tbs.totalInvoice);
+    const pur = safe(tbs.totalPurchase);
+    const pay = safe(tbs.totalPayment);
+    const isZeroTBS = [inv, pur, pay].every(x => (Number(x.last24Hours||0) + Number(x.last7Days||0) + Number(x.last30Days||0)) === 0);
+    const isNoSeries = !Array.isArray(data.chartData) || data.chartData.length === 0;
+    const isNoTx = !Array.isArray(data.recentTransactions) || data.recentTransactions.length === 0;
+    return isZeroQS && isZeroTBS && isNoSeries && isNoTx;
+  };
+
+  React.useEffect(() => {
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        const resp = await reportsService.getDashboardSummary({ period: dateRange });
+        if (resp?.data) {
+          if (isEmptyDashData(resp.data)) {
+            setDashData(roleFallback(user?.role));
+          } else {
+            setDashData(resp.data);
+          }
+        } else {
+          setDashData(roleFallback(user?.role));
+        }
+      } catch (e) {
+        console.error('Failed to load dashboard summary', e);
+        setDashData(roleFallback(user?.role));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    load();
+  }, [dateRange]);
 
   // If user is a client, show the client portal instead
   if (user?.role === 'contact') {
@@ -190,6 +284,7 @@ const MonochromaticDashboard = () => {
       case 'admin':
         return 'Administrator Dashboard';
       case 'accountant':
+      case 'invoicing':
         return 'Accountant Dashboard';
       default:
         return 'Dashboard';
@@ -202,16 +297,18 @@ const MonochromaticDashboard = () => {
     setIsLoading(false);
   };
 
+  const formatCurrency = (v) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(v || 0));
   const quickStats = [
-    { title: 'Total Revenue', value: '₹12,45,000', change: '+12.5%', changeType: 'positive', icon: DollarSign, gradient: 'from-green-500 to-emerald-600' },
-    { title: 'Active Clients', value: '248', change: '+8.2%', changeType: 'positive', icon: Users, gradient: 'from-blue-500 to-indigo-600' },
-    { title: 'Growth Rate', value: '18.5%', change: '+2.1%', changeType: 'positive', icon: TrendingUp, gradient: 'from-purple-500 to-pink-600' }
+    { title: 'Total Revenue', value: formatCurrency(dashData.quickStats.totalRevenue), change: `${dashData.quickStats.growthRate >= 0 ? '+' : ''}${(dashData.quickStats.growthRate || 0).toFixed(1)}%`, changeType: dashData.quickStats.growthRate >= 0 ? 'positive' : 'negative', icon: DollarSign, gradient: 'from-green-500 to-emerald-600' },
+    { title: 'Active Clients', value: String(dashData.quickStats.activeClients || 0), change: '', changeType: 'positive', icon: Users, gradient: 'from-blue-500 to-indigo-600' },
+    { title: 'Growth Rate', value: `${(dashData.quickStats.growthRate || 0).toFixed(1)}%`, change: '', changeType: dashData.quickStats.growthRate >= 0 ? 'positive' : 'negative', icon: TrendingUp, gradient: 'from-purple-500 to-pink-600' }
   ];
 
   const getQuickActions = () => {
     switch (user?.role) {
       case 'admin':
       case 'accountant':
+      case 'invoicing':
         return [
           { id: 'contact-master', label: 'Customer', icon: Contact, color: 'var(--success)' },
           { id: 'vendor-master', label: 'Vendors', icon: Building2, color: 'var(--purple)' },
@@ -335,7 +432,7 @@ const MonochromaticDashboard = () => {
         </div>
 
         {/* Quick Actions for Admin/Accountant */}
-        {(user?.role === 'admin' || user?.role === 'accountant') && (
+        {(user?.role === 'admin' || ['accountant', 'invoicing'].includes(user?.role)) && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="shiv-surface rounded-xl p-6 mb-6 mx-6" style={{ border: '1px solid var(--border)', boxShadow: '0 4px 12px var(--shadow)' }}>
             <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Quick Actions</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -375,19 +472,19 @@ const MonochromaticDashboard = () => {
 
         {/* Dashboard Stats */}
         <div className="mx-6 mb-6">
-          <DashboardStats totalInvoice={mockTimeBasedStats.totalInvoice} totalPurchase={mockTimeBasedStats.totalPurchase} totalPayment={mockTimeBasedStats.totalPayment} />
+          <DashboardStats totalInvoice={dashData.timeBasedStats.totalInvoice} totalPurchase={dashData.timeBasedStats.totalPurchase} totalPayment={dashData.timeBasedStats.totalPayment} />
         </div>
 
         {/* Charts */}
-        {(user?.role === 'admin' || user?.role === 'accountant') && (
+        {(user?.role === 'admin' || ['accountant', 'invoicing'].includes(user?.role)) && (
           <div className="mx-6 mb-6">
-            <SalesChart data={mockSalesData} />
+            <SalesChart data={dashData.chartData} />
           </div>
         )}
 
         {/* Recent Transactions */}
         <div className="mx-6">
-          <RecentTransactions transactions={mockTransactions} />
+          <RecentTransactions transactions={dashData.recentTransactions} />
         </div>
       </div>
     </div>

@@ -1,13 +1,35 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth'; 
 import DashboardStats from '../components/Dashboard/DashboardStats';
 import SalesChart from '../components/Dashboard/SalesChart';
 import RecentTransactions from '../components/Dashboard/RecentTransactions';
-import { mockDashboardStats, mockSalesData, mockTransactions, mockTimeBasedStats } from '../data/mockdata';
+import reportsService from '../services/reportsService';
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const [dateRange, setDateRange] = useState('30d');
+  const [dashData, setDashData] = useState({
+    timeBasedStats: {
+      totalInvoice: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+      totalPurchase: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+      totalPayment: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+    },
+    chartData: [],
+    recentTransactions: [],
+  });
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const resp = await reportsService.getDashboardSummary({ period: dateRange });
+        if (resp?.data) setDashData(resp.data);
+      } catch (e) {
+        console.error('Failed to load dashboard summary', e);
+      }
+    };
+    load();
+  }, [dateRange]);
 
   const getDashboardTitle = () => {
     switch (user?.role) {
@@ -53,18 +75,18 @@ const Dashboard = () => {
 
       {/* Dashboard Stats */}
       <DashboardStats 
-        totalInvoice={mockTimeBasedStats.totalInvoice}
-        totalPurchase={mockTimeBasedStats.totalPurchase}
-        totalPayment={mockTimeBasedStats.totalPayment}
+        totalInvoice={dashData.timeBasedStats.totalInvoice}
+        totalPurchase={dashData.timeBasedStats.totalPurchase}
+        totalPayment={dashData.timeBasedStats.totalPayment}
       />
 
       {/* Charts */}
       {(user?.role === 'admin' || user?.role === 'accountant') && (
-        <SalesChart data={mockSalesData} />
+        <SalesChart data={dashData.chartData} />
       )}
 
       {/* Recent Transactions */}
-      <RecentTransactions transactions={mockTransactions} />
+      <RecentTransactions transactions={dashData.recentTransactions} />
 
       {/* Quick Actions */}
       <motion.div

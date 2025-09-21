@@ -17,7 +17,8 @@ const User = sequelize.define('User', {
     validate: { isEmail: true },
   },
   password: { type: DataTypes.STRING, allowNull: false },
-  role: { type: DataTypes.ENUM('invoicing', 'admin'), defaultValue: 'invoicing' },
+  // Include 'invoicing' for backward compatibility with existing data
+  role: { type: DataTypes.ENUM('admin', 'accountant', 'contact', 'invoicing'), defaultValue: 'invoicing' },
   passwordResetToken: { type: DataTypes.STRING, allowNull: true },
   passwordResetExpires: { type: DataTypes.DATE, allowNull: true },
 }, {

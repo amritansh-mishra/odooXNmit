@@ -1,4 +1,3 @@
-
 import apiService from './api';
 
 class ReportsService {
@@ -52,6 +51,14 @@ class ReportsService {
     } catch (error) {
       throw new Error('Failed to fetch dashboard statistics');
     }
+  }
+
+  async getDashboardSummary(params = {}) {
+    const queryParams = new URLSearchParams();
+    if (params.period) queryParams.append('period', params.period);
+    const qs = queryParams.toString();
+    const endpoint = qs ? `/reports/dashboard?${qs}` : '/reports/dashboard';
+    return apiService.get(endpoint);
   }
 }
 

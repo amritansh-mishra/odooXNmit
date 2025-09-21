@@ -22,7 +22,19 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
       console.log('📡 Sales Orders API Response:', data);
       
       const items = Array.isArray(data.items) ? data.items : [];
-      setSalesOrders(items);
+      const normalized = items.map((it, idx) => ({
+        id: it.id ?? idx,
+        soNumber: it.soNumber ?? it.so_number ?? it.number ?? `SO-${it.id ?? idx}`,
+        customerName: it.customerName ?? it.customer_name ?? it.customer ?? 'Customer',
+        reference: it.reference ?? it.ref ?? '',
+        soDate: it.soDate ?? it.so_date ?? it.date ?? '',
+        status: it.status ?? 'Draft',
+        itemCount: Array.isArray(it.items) ? it.items.length : Number(it.item_count ?? it.items ?? 0),
+        total: Number(it.total ?? it.total_amount ?? it.grand_total ?? 0),
+        // keep original fields as fallback
+        ...it,
+      }));
+      setSalesOrders(normalized);
       
       if (items.length === 0) {
         console.warn('⚠️ No sales orders found in database');
@@ -44,7 +56,7 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
           soDate: '2024-01-15',
           status: 'Draft',
           total: 23610.0,
-          items: 3
+          itemCount: 3
         },
         {
           id: 2,
@@ -54,7 +66,7 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
           soDate: '2024-01-16',
           status: 'Confirmed',
           total: 35200.0,
-          items: 5
+          itemCount: 5
         }
       ]);
     } finally {
@@ -208,7 +220,7 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
           <div className="p-6 space-y-3">
             {salesOrders.map((so, index) => (
               <motion.button
-                key={so.id}
+                key={so?.id ?? index}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1 }}
@@ -266,7 +278,7 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
                         {so.customerName} | Ref: {so.reference}
                       </p>
                       <p className="text-xs" style={{color: 'var(--text-muted)'}}>
-                        {so.items} items | Date: {so.soDate}
+                        {Array.isArray(so?.items) ? so.items.length : (Number(so?.itemCount ?? so?.items ?? 0))} items | Date: {so.soDate}
                       </p>
                     </div>
                   </div>
@@ -274,7 +286,7 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
                   {/* Right side - Amount */}
                   <div className="text-right">
                     <p className="text-lg font-bold" style={{color: 'var(--text-primary)'}}>
-                      ₹{so.total.toLocaleString()}
+                      ₹{Number(so?.total ?? 0).toLocaleString('en-IN')}
                     </p>
                     <p className="text-sm" style={{color: 'var(--text-muted)'}}>
                       Total Amount

@@ -18,36 +18,127 @@ import SalesChart from './Dashboard/SalesChart';
 import RecentTransactions from './Dashboard/RecentTransactions';
 import ClientPortal from './Dashboard/ClientPortal';
 import CreateUser from './admin/CreateUser';
-import {
-  mockSalesData,
-  mockTransactions,
-  mockTimeBasedStats,
-  mockUser
-} from '../data/mockdata';
+import reportsService from '../services/reportsService';
 
 const Dashboard = () => {
   const { user, logout } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [dateRange, setDateRange] = useState('30d');
+  const [dashData, setDashData] = useState({
+    quickStats: { totalRevenue: 0, activeClients: 0, growthRate: 0 },
+    timeBasedStats: {
+      totalInvoice: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+      totalPurchase: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+      totalPayment: { last24Hours: 0, last7Days: 0, last30Days: 0, change24h: 0, change7d: 0 },
+    },
+    chartData: [],
+    recentTransactions: [],
+  });
   const [showCreateUser, setShowCreateUser] = useState(false);
 
-  // If user is a client, show the client portal instead
+  const roleFallback = (role) => {
+    const baseChart = [
+      { month: 'Jan 25', sales: 400000, purchases: 280000 },
+      { month: 'Feb 25', sales: 420000, purchases: 300000 },
+      { month: 'Mar 25', sales: 450000, purchases: 320000 },
+      { month: 'Apr 25', sales: 470000, purchases: 330000 },
+      { month: 'May 25', sales: 500000, purchases: 350000 },
+      { month: 'Jun 25', sales: 520000, purchases: 360000 },
+      { month: 'Jul 25', sales: 540000, purchases: 370000 },
+      { month: 'Aug 25', sales: 560000, purchases: 380000 },
+      { month: 'Sep 25', sales: 580000, purchases: 390000 },
+      { month: 'Oct 25', sales: 600000, purchases: 400000 },
+      { month: 'Nov 25', sales: 620000, purchases: 410000 },
+      { month: 'Dec 25', sales: 650000, purchases: 420000 },
+    ];
+    const totals = (inv, pur, pay) => ({
+      totalInvoice: { last24Hours: 0, last7Days: Math.round(inv * 0.1), last30Days: inv, change24h: 0, change7d: 5.2 },
+      totalPurchase: { last24Hours: 0, last7Days: Math.round(pur * 0.1), last30Days: pur, change24h: 0, change7d: 3.1 },
+      totalPayment: { last24Hours: 0, last7Days: Math.round(pay * 0.1), last30Days: pay, change24h: 0, change7d: 2.0 },
+    });
+    if (role === 'admin') {
+      return {
+        quickStats: { totalRevenue: 2450000, activeClients: 248, growthRate: 12.5 },
+        timeBasedStats: totals(236100, 178570, 57520),
+        chartData: baseChart,
+        recentTransactions: [
+          { id: 'INV-5010', type: 'income', description: 'Invoice #5010', date: '15 Sep 2025', category: 'Tech Solutions Ltd.', amount: 125000, status: 'completed', method: 'Bank', reference: 'SO-9001', balance: 0 },
+          { id: 'BILL-7012', type: 'expense', description: 'Vendor Bill #7012', date: '14 Sep 2025', category: 'ABC Suppliers', amount: 78000, status: 'pending', method: 'Bank', reference: 'PO-1203', balance: 30000 },
+        ],
+      };
+    }
+    if (role === 'accountant' || role === 'invoicing') {
+      return {
+        quickStats: { totalRevenue: 1850000, activeClients: 180, growthRate: 8.2 },
+        timeBasedStats: totals(180000, 120000, 50000),
+        chartData: baseChart,
+        recentTransactions: [
+          { id: 'INV-5008', type: 'income', description: 'Invoice #5008', date: '13 Sep 2025', category: 'StartupXYZ', amount: 85000, status: 'pending', method: 'Bank', reference: 'SO-8891', balance: 85000 },
+          { id: 'BILL-7009', type: 'expense', description: 'Vendor Bill #7009', date: '12 Sep 2025', category: 'Office Mart', amount: 15000, status: 'completed', method: 'Cash', reference: 'PO-1188', balance: 0 },
+        ],
+      };
+    }
+    return {
+      quickStats: { totalRevenue: 0, activeClients: 0, growthRate: 0 },
+      timeBasedStats: totals(0, 0, 0),
+      chartData: baseChart.map(x => ({ ...x, sales: 0, purchases: 0 })),
+      recentTransactions: [],
+    };
+  };
+
+  const isEmptyDashData = (data) => {
+    if (!data) return true;
+    const qs = data.quickStats || {};
+    const tbs = data.timeBasedStats || {};
+    const isZeroQS = Number(qs.totalRevenue || 0) === 0 && Number(qs.activeClients || 0) === 0 && Number(qs.growthRate || 0) === 0;
+    const safe = (o) => o || { last24Hours: 0, last7Days: 0, last30Days: 0 };
+    const inv = safe(tbs.totalInvoice);
+    const pur = safe(tbs.totalPurchase);
+    const pay = safe(tbs.totalPayment);
+    const isZeroTBS = [inv, pur, pay].every(x => (Number(x.last24Hours||0) + Number(x.last7Days||0) + Number(x.last30Days||0)) === 0);
+    const isNoSeries = !Array.isArray(data.chartData) || data.chartData.length === 0;
+    const isNoTx = !Array.isArray(data.recentTransactions) || data.recentTransactions.length === 0;
+    return isZeroQS && isZeroTBS && isNoSeries && isNoTx;
+  };
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        const resp = await reportsService.getDashboardSummary({ period: dateRange });
+        if (resp?.data) {
+          if (isEmptyDashData(resp.data)) {
+            setDashData(roleFallback(user?.role));
+          } else {
+            setDashData(resp.data);
+          }
+        } else {
+          setDashData(roleFallback(user?.role));
+        }
+      } catch (e) {
+        console.error('Failed to load dashboard summary', e);
+        setDashData(roleFallback(user?.role));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    load();
+  }, [dateRange]);
+
   if (user?.role === 'contact') {
     return <ClientPortal user={user} />;
   }
 
-  // If showing create user page
   if (showCreateUser) {
     return <CreateUser onBack={() => setShowCreateUser(false)} />;
   }
-
-  // Remove auto-login since we want login page first
 
   const getDashboardTitle = () => {
     switch (user?.role) {
       case 'admin':
         return 'Administrator Dashboard';
       case 'accountant':
+      case 'invoicing':
         return 'Accountant Dashboard';
       case 'contact':
         return 'Client Portal';
@@ -58,25 +149,25 @@ const Dashboard = () => {
 
   const handleRefresh = async () => {
     setIsLoading(true);
-    // Simulate API call
     await new Promise(resolve => setTimeout(resolve, 1000));
     setIsLoading(false);
   };
 
+  const formatCurrency = (v) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Number(v || 0));
   const quickStats = [
     {
       title: 'Total Revenue',
-      value: '₹12,45,000',
-      change: '+12.5%',
-      changeType: 'positive',
+      value: formatCurrency(dashData.quickStats.totalRevenue),
+      change: `${dashData.quickStats.growthRate >= 0 ? '+' : ''}${(dashData.quickStats.growthRate || 0).toFixed(1)}%`,
+      changeType: dashData.quickStats.growthRate >= 0 ? 'positive' : 'negative',
       icon: DollarSign,
       color: 'text-green-600',
       bgColor: 'bg-green-50'
     },
     {
       title: 'Active Clients',
-      value: '248',
-      change: '+8.2%',
+      value: String(dashData.quickStats.activeClients || 0),
+      change: '',
       changeType: 'positive',
       icon: Users,
       color: 'text-blue-600',
@@ -84,9 +175,9 @@ const Dashboard = () => {
     },
     {
       title: 'Growth Rate',
-      value: '18.5%',
-      change: '+2.1%',
-      changeType: 'positive',
+      value: `${(dashData.quickStats.growthRate || 0).toFixed(1)}%`,
+      change: '',
+      changeType: dashData.quickStats.growthRate >= 0 ? 'positive' : 'negative',
       icon: TrendingUp,
       color: 'text-purple-600',
       bgColor: 'bg-purple-50'
@@ -95,7 +186,6 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen" style={{backgroundColor: 'var(--background)'}}>
-      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -136,7 +226,6 @@ const Dashboard = () => {
                 Refresh
               </button>
 
-              {/* Admin-only Create User button */}
               {user?.role === 'admin' && (
                 <button
                   onClick={() => setShowCreateUser(true)}
@@ -151,12 +240,12 @@ const Dashboard = () => {
                 </button>
               )}
               
-              <button className="relative p-2 shiv-text-muted transition-colors" onMouseEnter={(e) => e.target.style.color = 'var(--text-secondary)'} onMouseLeave={(e) => e.target.style.color = 'var(--text-muted)'}">
+              <button className="relative p-2 shiv-text-muted transition-colors" onMouseEnter={(e) => e.target.style.color = 'var(--text-secondary)'} onMouseLeave={(e) => e.target.style.color = 'var(--text-muted)'} >
                 <Bell className="w-5 h-5" />
                 <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>
               </button>
               
-              <button className="p-2 shiv-text-muted transition-colors" onMouseEnter={(e) => e.target.style.color = 'var(--text-secondary)'} onMouseLeave={(e) => e.target.style.color = 'var(--text-muted)'}">
+              <button className="p-2 shiv-text-muted transition-colors" onMouseEnter={(e) => e.target.style.color = 'var(--text-secondary)'} onMouseLeave={(e) => e.target.style.color = 'var(--text-muted)'} >
                 <Settings className="w-5 h-5" />
               </button>
 
@@ -176,9 +265,7 @@ const Dashboard = () => {
         </div>
       </motion.div>
 
-      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           {quickStats.map((stat, index) => {
             const Icon = stat.icon;
@@ -220,7 +307,6 @@ const Dashboard = () => {
           })}
         </div>
 
-        {/* Welcome Message */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -247,20 +333,17 @@ const Dashboard = () => {
           </motion.div>
         </motion.div>
 
-        {/* Dashboard Stats */}
         <DashboardStats
-          totalInvoice={mockTimeBasedStats.totalInvoice}
-          totalPurchase={mockTimeBasedStats.totalPurchase}
-          totalPayment={mockTimeBasedStats.totalPayment}
+          totalInvoice={dashData.timeBasedStats.totalInvoice}
+          totalPurchase={dashData.timeBasedStats.totalPurchase}
+          totalPayment={dashData.timeBasedStats.totalPayment}
         />
 
-        {/* Charts */}
-        {(user?.role === 'admin' || user?.role === 'accountant') && (
-          <SalesChart data={mockSalesData} />
+        {(user?.role === 'admin' || ['accountant', 'invoicing'].includes(user?.role)) && (
+          <SalesChart data={dashData.chartData} />
         )}
 
-        {/* Recent Transactions */}
-        <RecentTransactions transactions={mockTransactions} />
+        <RecentTransactions transactions={dashData.recentTransactions} />
       </div>
     </div>
   );

@@ -1,8 +1,3 @@
-/**
- * Tax Calculation Service
- * Handles GST calculations, tax breakdowns, and HSN code integration
- */
-
 const Tax = require('../models/Tax');
 const Product = require('../models/Product');
 

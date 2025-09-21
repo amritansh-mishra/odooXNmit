@@ -14,37 +14,31 @@ class ApiService {
     this.baseURL = API_BASE_URL;
   }
 
-  /**
-   * Get authentication token from localStorage
-   */
+  // fetches Token, it is needed to access protected API endpoints.
   getAuthToken() {
     return localStorage.getItem('auth_token');
   }
 
-  /**
-   * Get default headers for API requests
-   */
+ 
   getHeaders(includeAuth = true) {
     const headers = {
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/json', // default body json.
     };
 
     if (includeAuth) {
-      const token = this.getAuthToken();
+      const token = this.getAuthToken(); // reads and saves token
       if (token) {
-        headers.Authorization = `Bearer ${token}`;
+        headers.Authorization = `Bearer ${token}`; //if token exists adds another header
       }
     }
 
     return headers;
   }
 
-  /**
-   * Handle API response
-   */
+ // handles error 
   async handleResponse(response) {
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      const errorData = await response.json().catch(() => ({})); //converts response to json and returns it
       throw new ApiError(
         errorData.message || `HTTP Error: ${response.status}`,
         response.status,
@@ -55,9 +49,8 @@ class ApiService {
     return response.json();
   }
 
-  /**
-   * Make HTTP request
-   */
+  // 
+  
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
     const config = {

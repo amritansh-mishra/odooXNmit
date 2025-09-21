@@ -1,21 +1,13 @@
-/**
- * Reports Service
- * Handles all report-related API calls
- */
 
 import apiService from './api';
 
 class ReportsService {
-  /**
-   * Get stock report
-   */
+  
   async getStockReport() {
     return apiService.get('/reports/stock');
   }
 
-  /**
-   * Get profit and loss report
-   */
+ 
   async getProfitAndLossReport(params = {}) {
     const queryParams = new URLSearchParams();
     
@@ -29,9 +21,6 @@ class ReportsService {
     return apiService.get(endpoint);
   }
 
-  /**
-   * Get balance sheet report
-   */
   async getBalanceSheetReport(params = {}) {
     const queryParams = new URLSearchParams();
     
@@ -45,9 +34,7 @@ class ReportsService {
     return apiService.get(endpoint);
   }
 
-  /**
-   * Get dashboard statistics
-   */
+  
   async getDashboardStats() {
     // This would typically be a separate endpoint
     // For now, we'll combine multiple report calls

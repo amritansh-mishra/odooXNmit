@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Plus, Calculator } from 'lucide-react';
 import TaxesForm from './TaxesForm';
+import taxesService from '../../services/taxesService';
 
 const TaxesMaster = ({ onBack, onHome }) => {
   const [showForm, setShowForm] = useState(false);
@@ -10,45 +11,63 @@ const TaxesMaster = ({ onBack, onHome }) => {
   const [taxes, setTaxes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [toast, setToast] = useState(null);
+
+  const loadTaxes = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await taxesService.getTaxes({ limit: 50 });
+      const items = Array.isArray(data.items) ? data.items : [];
+      const mapped = items.map((t) => ({
+        id: t._id || t.id,
+        name: t.name,
+        computation: t.type === 'fixed' ? 'Fixed Value' : 'Percentage',
+        taxFor: t.applicableOn === 'Purchase' ? 'Purchase' : 'Sales',
+        value: t.rate ?? t.value ?? 0,
+        type: t.type || (t.computation === 'Fixed Value' ? 'fixed' : 'percentage')
+      }));
+      setTaxes(mapped);
+    } catch (e) {
+      console.error(e);
+      setError('Unable to fetch taxes from server. Showing demo data.');
+      setTaxes([
+        { id: 1, name: 'GST 18%', computation: 'Percentage', taxFor: 'Sales', value: 18, type: 'percentage' },
+        { id: 2, name: 'GST 12%', computation: 'Percentage', taxFor: 'Purchase', value: 12, type: 'percentage' },
+        { id: 3, name: 'CGST 9%', computation: 'Percentage', taxFor: 'Sales', value: 9, type: 'percentage' },
+        { id: 4, name: 'SGST 9%', computation: 'Percentage', taxFor: 'Sales', value: 9, type: 'percentage' },
+        { id: 5, name: 'Fixed Service Tax', computation: 'Fixed Value', taxFor: 'Purchase', value: 500, type: 'fixed' },
+        { id: 6, name: 'GST 5%', computation: 'Percentage', taxFor: 'Sales', value: 5, type: 'percentage' }
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchTaxes = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const token = localStorage.getItem('auth_token');
-        const res = await fetch('/api/master/taxes?limit=50', {
-          headers: { Authorization: token ? `Bearer ${token}` : undefined },
-        });
-        if (!res.ok) throw new Error('Failed to load taxes');
-        const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        const mapped = items.map((t) => ({
-          id: t._id || t.id,
-          name: t.name,
-          computation: t.type === 'fixed' ? 'Fixed Value' : 'Percentage',
-          taxFor: t.applicableOn === 'Purchase' ? 'Purchase' : 'Sales',
-          value: t.rate ?? t.value ?? 0,
-          type: t.type || (t.computation === 'Fixed Value' ? 'fixed' : 'percentage')
-        }));
-        setTaxes(mapped);
-      } catch (e) {
-        console.error(e);
-        setError('Unable to fetch taxes from server. Showing demo data.');
-        setTaxes([
-          { id: 1, name: 'GST 18%', computation: 'Percentage', taxFor: 'Sales', value: 18, type: 'percentage' },
-          { id: 2, name: 'GST 12%', computation: 'Percentage', taxFor: 'Purchase', value: 12, type: 'percentage' },
-          { id: 3, name: 'CGST 9%', computation: 'Percentage', taxFor: 'Sales', value: 9, type: 'percentage' },
-          { id: 4, name: 'SGST 9%', computation: 'Percentage', taxFor: 'Sales', value: 9, type: 'percentage' },
-          { id: 5, name: 'Fixed Service Tax', computation: 'Fixed Value', taxFor: 'Purchase', value: 500, type: 'fixed' },
-          { id: 6, name: 'GST 5%', computation: 'Percentage', taxFor: 'Sales', value: 5, type: 'percentage' }
-        ]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchTaxes();
+    loadTaxes();
   }, []);
+
+  const showToast = (message) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleSaved = (savedItem, mode) => {
+    if (!savedItem) return;
+    if (mode === 'new') {
+      setTaxes((prev) => [savedItem, ...prev]);
+      showToast('Tax created');
+    } else {
+      setTaxes((prev) => prev.map((t) => (t.id === savedItem.id ? { ...t, ...savedItem } : t)));
+      showToast('Tax updated');
+    }
+  };
+
+  const handleDeleted = (id) => {
+    setTaxes((prev) => prev.filter((t) => t.id !== id));
+    showToast('Tax deleted');
+  };
 
   const handleTaxClick = (tax) => {
     setSelectedTax(tax);
@@ -65,6 +84,8 @@ const TaxesMaster = ({ onBack, onHome }) => {
   const handleBackFromForm = () => {
     setShowForm(false);
     setSelectedTax(null);
+    // Refresh taxes list after form submission
+    loadTaxes();
   };
 
   // If showing form, render TaxesForm
@@ -75,6 +96,8 @@ const TaxesMaster = ({ onBack, onHome }) => {
         onHome={onHome}
         tax={selectedTax}
         mode={formMode}
+        onSaved={handleSaved}
+        onDeleted={handleDeleted}
       />
     );
   }
@@ -147,6 +170,13 @@ const TaxesMaster = ({ onBack, onHome }) => {
               <p className="text-sm mt-2" style={{ color: 'var(--text-muted)' }}>{error}</p>
             )}
           </div>
+
+          {/* Toast Message */}
+          {toast && (
+            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mx-6 mb-4">
+              <p className="text-yellow-800 text-sm">{toast}</p>
+            </div>
+          )}
 
           {/* Table Header */}
           <div className="grid grid-cols-4 gap-4 p-4 border-b font-semibold text-sm"

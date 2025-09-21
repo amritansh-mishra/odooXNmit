@@ -1,8 +1,3 @@
-/**
- * API Service Layer
- * Centralized API communication for the frontend
- */
-
 const API_BASE_URL = '/api';
 
 class ApiError extends Error {

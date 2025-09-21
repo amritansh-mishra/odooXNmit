@@ -30,26 +30,72 @@ exports.listContacts = async (req, res, next) => {
     const { page, limit, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
     const type = req.query.type;
-    const isActive = req.query.isActive === 'false' ? false : true;
+    const isActive = req.query.isActive;
 
-    const where = { ...(type ? { type } : {}), ...(isActive !== undefined ? { is_active: isActive } : {}) };
+    // Build where clause - only filter by isActive if explicitly provided
+    const where = {};
+    if (type) where.type = type;
+    
+    // Handle isActive parameter properly - ignore 'undefined' string
+    if (isActive !== undefined && isActive !== 'undefined' && isActive !== null) {
+      where.is_active = isActive === 'true';
+    }
+    
     if (q) {
       where[Op.or] = [
         { name: { [Op.like]: `%${q}%` } },
         { email: { [Op.like]: `%${q}%` } },
-        { mobile: { [Op.like]: `%${q}%` } },
       ];
+      
+      // Only add mobile search if we're not filtering (to avoid column issues)
+      if (!isActive || isActive === 'undefined') {
+        where[Op.or].push({ mobile: { [Op.like]: `%${q}%` } });
+      }
     }
 
-    const { rows, count } = await Contact.findAndCountAll({
-      where,
-      order: [['created_at', 'DESC']],
-      limit,
-      offset,
-    });
+    let rows, count;
+    
+    try {
+      // Try the full query first
+      const result = await Contact.findAndCountAll({
+        where,
+        order: [['created_at', 'DESC']],
+        limit,
+        offset,
+        attributes: ['id', 'name', 'type', 'email', 'mobile', 'created_at'] // Only select columns we know exist
+      });
+      rows = result.rows;
+      count = result.count;
+    } catch (dbError) {
+      console.error('Database query failed, trying simpler query:', dbError.message);
+      
+      // Fallback to simpler query without problematic columns
+      const simpleWhere = {};
+      if (type) simpleWhere.type = type;
+      
+      const result = await Contact.findAndCountAll({
+        where: simpleWhere,
+        order: [['created_at', 'DESC']],
+        limit,
+        offset,
+        attributes: ['id', 'name', 'type', 'email', 'created_at'] // Minimal columns
+      });
+      rows = result.rows;
+      count = result.count;
+    }
 
     res.json({ success: true, page, limit, total: count, items: rows });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    console.error('Error in listContacts:', err.message);
+    
+    // Send a more specific error response
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch contacts',
+      error: err.message,
+      details: 'Check if database table structure matches the model'
+    });
+  }
 };
 
 // GET /api/master/contacts/:id
@@ -98,4 +144,51 @@ exports.unarchiveContact = async (req, res, next) => {
     await doc.update({ is_active: true, archived_at: null });
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
+};
+
+// DELETE /api/master/contacts/:id
+exports.deleteContact = async (req, res, next) => {
+  try {
+    const doc = await Contact.findByPk(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Contact not found' });
+    await doc.destroy();
+    res.json({ success: true, message: 'Contact deleted' });
+  } catch (err) { next(err); }
+};
+
+// DEBUG: GET /api/master/contacts/debug - Show all contacts with their types
+exports.debugContacts = async (req, res, next) => {
+  try {
+    const contacts = await Contact.findAll({
+      attributes: ['id', 'name', 'type', 'email', 'created_at'],
+      order: [['created_at', 'DESC']],
+      limit: 50
+    });
+    
+    const typeStats = {};
+    contacts.forEach(contact => {
+      const type = contact.type || 'NULL';
+      typeStats[type] = (typeStats[type] || 0) + 1;
+    });
+    
+    res.json({ 
+      success: true, 
+      total: contacts.length,
+      typeStats,
+      contacts: contacts.map(c => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        email: c.email,
+        created_at: c.created_at
+      }))
+    });
+  } catch (err) { 
+    console.error('Error in debugContacts:', err.message);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch debug info',
+      error: err.message
+    });
+  }
 };

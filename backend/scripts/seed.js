@@ -1,5 +1,4 @@
-// Non-destructive seed script. Safe to delete later.
-// Usage: node backend/scripts/seed.js
+
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const connectDB = require('../db/db');

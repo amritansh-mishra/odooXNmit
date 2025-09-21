@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Home, Check, Edit, Trash2, Upload } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import contactsService from '../../services/contactsService';
 
-const ContactForm = ({ onBack, onHome, contact = null, mode = 'new' }) => {
+const ContactForm = ({ onBack, onHome, contact = null, mode = 'new', onSaved, onDeleted }) => {
   const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: contact?.name || '',
     email: contact?.email || '',
@@ -12,7 +14,8 @@ const ContactForm = ({ onBack, onHome, contact = null, mode = 'new' }) => {
     address: contact?.address || '',
     city: contact?.city || '',
     state: contact?.state || '',
-    pincode: contact?.pincode || ''
+    pincode: contact?.pincode || '',
+    type: contact?.type || 'Customer'
   });
 
   const handleInputChange = (field, value) => {
@@ -22,10 +25,45 @@ const ContactForm = ({ onBack, onHome, contact = null, mode = 'new' }) => {
     }));
   };
 
-  const handleConfirm = () => {
-    console.log('Confirming contact:', formData);
-    // Handle save/update logic here
-    onBack();
+  const handleConfirm = async () => {
+    console.log('🔄 handleConfirm called with formData:', formData);
+    
+    try {
+      setLoading(true);
+      
+      // Prepare data for API
+      const contactData = {
+        name: formData.name,
+        type: formData.type,
+        email: formData.email,
+        mobile: formData.phone, // Changed from phone to mobile to match backend
+        address_city: formData.city,
+        address_state: formData.state
+      };
+
+      console.log('📤 Sending to API:', contactData);
+
+      if (mode === 'new') {
+        // Create new contact
+        const result = await contactsService.createContact(contactData);
+        console.log('✅ Contact created successfully:', result);
+        if (onSaved) onSaved(result.item || result.contact || result, 'new');
+      } else {
+        // Update existing contact
+        const result = await contactsService.updateContact(contact.id, contactData);
+        console.log('✅ Contact updated successfully:', result);
+        // Some APIs return the updated entity, others not; fallback to local merge
+        const updated = result.item || result.contact || { id: contact.id, ...contactData };
+        if (onSaved) onSaved(updated, 'edit');
+      }
+      
+      onBack(); // This will trigger loadContacts() in parent
+    } catch (error) {
+      console.error('❌ Failed to save contact:', error);
+      alert('Failed to save contact: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleModify = () => {
@@ -34,24 +72,39 @@ const ContactForm = ({ onBack, onHome, contact = null, mode = 'new' }) => {
   };
 
   const handleDelete = () => {
-    console.log('Deleting contact:', contact);
-    // Handle delete logic here
-    onBack();
+    if (!contact?.id) {
+      alert('No contact selected to delete');
+      return;
+    }
+    if (!window.confirm('Are you sure you want to delete this contact? This action cannot be undone.')) return;
+    (async () => {
+      try {
+        setLoading(true);
+        await contactsService.deleteContact(contact.id);
+        if (onDeleted) onDeleted(contact.id);
+        onBack();
+      } catch (err) {
+        console.error('Failed to delete contact:', err);
+        alert('Failed to delete contact: ' + (err.message || 'Unknown error'));
+      } finally {
+        setLoading(false);
+      }
+    })();
   };
 
   const getNavigationButtons = () => {
     if (user?.role === 'admin') {
       return [
-        { id: 'new', label: 'New', icon: null, action: () => window.location.reload() },
-        { id: 'confirm', label: 'Confirm', icon: Check, action: handleConfirm },
-        { id: 'modify', label: 'Modify', icon: Edit, action: handleModify },
-        { id: 'delete', label: 'Delete', icon: Trash2, action: handleDelete },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'new', label: 'New', icon: null, action: () => window.location.reload(), disabled: loading },
+        { id: 'confirm', label: loading ? 'Saving…' : 'Confirm', icon: Check, action: handleConfirm, disabled: loading },
+        { id: 'modify', label: 'Modify', icon: Edit, action: handleModify, disabled: loading },
+        { id: 'delete', label: 'Delete', icon: Trash2, action: handleDelete, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     } else {
       return [
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     }
   };
@@ -106,6 +159,7 @@ const ContactForm = ({ onBack, onHome, contact = null, mode = 'new' }) => {
                     }}
                     whileTap={{ scale: 0.95 }}
                     onClick={button.action}
+                    disabled={button.disabled || loading}
                   >
                     {ButtonIcon && <ButtonIcon className="w-4 h-4 mr-2" />}
                     {button.label}

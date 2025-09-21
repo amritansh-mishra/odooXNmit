@@ -9,6 +9,7 @@ const {
   updateProduct,
   archiveProduct,
   unarchiveProduct,
+  deleteProduct,
 } = require('../controllers/productsController');
 
 // Protect all master routes
@@ -60,5 +61,8 @@ router.put(
 // Archive (admin only)
 router.patch('/:id/archive', requireRole('admin'), archiveProduct);
 router.patch('/:id/unarchive', requireRole('admin'), unarchiveProduct);
+
+// Hard delete (admin only)
+router.delete('/:id', requireRole('admin'), deleteProduct);
 
 module.exports = router;

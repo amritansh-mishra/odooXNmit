@@ -1,64 +1,91 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Plus, FileText } from 'lucide-react';
 import SalesOrder from './SalesOrder';
+import salesOrdersService from '../../services/salesOrdersService';
 
 const SalesOrderMaster = ({ onBack, onHome }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedSO, setSelectedSO] = useState(null);
   const [formMode, setFormMode] = useState('new');
-  const [salesOrders] = useState([
-    {
-      id: 1,
-      soNumber: 'SO0001',
-      customerName: 'Dinesh Pathak',
-      reference: 'REF-25-0001',
-      soDate: '2024-01-15',
-      status: 'Draft',
-      total: 23610.0,
-      items: 3
-    },
-    {
-      id: 2,
-      soNumber: 'SO0002',
-      customerName: 'Modern Office Solutions',
-      reference: 'REF-25-0002',
-      soDate: '2024-01-16',
-      status: 'Confirmed',
-      total: 35200.0,
-      items: 5
-    },
-    {
-      id: 3,
-      soNumber: 'SO0003',
-      customerName: 'Corporate Interiors Ltd',
-      reference: 'REF-25-0003',
-      soDate: '2024-01-17',
-      status: 'Confirmed',
-      total: 18750.0,
-      items: 2
-    },
-    {
-      id: 4,
-      soNumber: 'SO0004',
-      customerName: 'Luxury Homes Pvt Ltd',
-      reference: 'REF-25-0004',
-      soDate: '2024-01-18',
-      status: 'Draft',
-      total: 12900.0,
-      items: 4
-    },
-    {
-      id: 5,
-      soNumber: 'SO0005',
-      customerName: 'Premium Offices',
-      reference: 'REF-25-0005',
-      soDate: '2024-01-19',
-      status: 'Cancelled',
-      total: 28400.0,
-      items: 6
+  const [salesOrders, setSalesOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [toast, setToast] = useState(null);
+
+  const loadSalesOrders = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      console.log('🔄 Loading sales orders from API...');
+      const data = await salesOrdersService.getSalesOrders({ limit: 50 });
+      console.log('📡 Sales Orders API Response:', data);
+      
+      const items = Array.isArray(data.items) ? data.items : [];
+      setSalesOrders(items);
+      
+      if (items.length === 0) {
+        console.warn('⚠️ No sales orders found in database');
+        setError('No sales orders found in database.');
+      } else {
+        console.log('✅ Successfully loaded', items.length, 'sales orders');
+      }
+    } catch (e) {
+      console.error('❌ Failed to load sales orders:', e);
+      setError(`Unable to fetch sales orders: ${e.message || 'Unknown error'}`);
+      
+      // Fallback to demo data
+      setSalesOrders([
+        {
+          id: 1,
+          soNumber: 'SO0001',
+          customerName: 'Dinesh Pathak',
+          reference: 'REF-25-0001',
+          soDate: '2024-01-15',
+          status: 'Draft',
+          total: 23610.0,
+          items: 3
+        },
+        {
+          id: 2,
+          soNumber: 'SO0002',
+          customerName: 'Modern Office Solutions',
+          reference: 'REF-25-0002',
+          soDate: '2024-01-16',
+          status: 'Confirmed',
+          total: 35200.0,
+          items: 5
+        }
+      ]);
+    } finally {
+      setLoading(false);
     }
-  ]);
+  };
+
+  useEffect(() => {
+    loadSalesOrders();
+  }, []);
+
+  const showToast = (message) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleSaved = (savedItem, mode) => {
+    if (!savedItem) return;
+    if (mode === 'new') {
+      setSalesOrders((prev) => [savedItem, ...prev]);
+      showToast('Sales Order created');
+    } else {
+      setSalesOrders((prev) => prev.map((so) => (so.id === savedItem.id ? { ...so, ...savedItem } : so)));
+      showToast('Sales Order updated');
+    }
+  };
+
+  const handleDeleted = (id) => {
+    setSalesOrders((prev) => prev.filter((so) => so.id !== id));
+    showToast('Sales Order deleted');
+  };
 
   const handleSOClick = (so) => {
     setSelectedSO(so);
@@ -75,14 +102,20 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
   const handleBackFromForm = () => {
     setShowForm(false);
     setSelectedSO(null);
+    // Refresh sales orders list after form submission
+    loadSalesOrders();
   };
 
   const getStatusColor = (status) => {
-    switch (status) {
-      case 'Draft': return 'var(--warning)';
-      case 'Confirmed': return 'var(--success)';
-      case 'Cancelled': return 'var(--error)';
-      default: return 'var(--text-muted)';
+    switch (status?.toLowerCase()) {
+      case 'draft':
+        return { color: 'var(--warning)', bg: 'var(--warning)' + '20' };
+      case 'confirmed':
+        return { color: 'var(--success)', bg: 'var(--success)' + '20' };
+      case 'cancelled':
+        return { color: 'var(--error)', bg: 'var(--error)' + '20' };
+      default:
+        return { color: 'var(--text-muted)', bg: 'var(--border-light)' };
     }
   };
 
@@ -94,6 +127,8 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
         onHome={onHome}
         salesOrder={selectedSO}
         mode={formMode}
+        onSaved={handleSaved}
+        onDeleted={handleDeleted}
       />
     );
   }
@@ -220,8 +255,8 @@ const SalesOrderMaster = ({ onBack, onHome }) => {
                         <span
                           className="px-2 py-1 rounded-full text-xs font-medium"
                           style={{
-                            backgroundColor: getStatusColor(so.status) + '20',
-                            color: getStatusColor(so.status)
+                            backgroundColor: getStatusColor(so.status).bg,
+                            color: getStatusColor(so.status).color
                           }}
                         >
                           {so.status}

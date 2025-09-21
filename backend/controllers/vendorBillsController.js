@@ -4,6 +4,7 @@ const Product = require('../models/Product');
 const CoA = require('../models/CoA');
 const Contact = require('../models/Customer');
 const Counter = require('../models/Counter');
+const pdfService = require('../services/pdfService');
 
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -127,85 +128,13 @@ exports.printBill = async (req, res, next) => {
     const bill = await VendorBill.findByPk(req.params.id);
     if (!bill) return res.status(404).json({ message: 'Vendor Bill not found' });
 
-    const items = bill.items;
-    const enriched = [];
-    for (const it of items) {
-      let product = null;
-      if (it.product) product = await Product.findByPk(it.product);
-      const qty = Number(it.quantity) || 0;
-      const unit = Number(it.unitPrice) || 0;
-      const rate = Number(it.taxRate || 0);
-      enriched.push({
-        product: product ? { id: product.id, name: product.name } : null,
-        hsnCode: it.hsnCode,
-        account: it.account,
-        quantity: qty,
-        unitPrice: unit,
-        taxRate: rate,
-        lineUntaxed: unit * qty,
-        lineTax: (unit * qty * rate) / 100,
-        lineTotal: unit * qty * (1 + rate / 100),
-      });
-    }
-
-    const payload = {
-      billNumber: bill.bill_number,
-      invoiceDate: bill.invoice_date,
-      dueDate: bill.due_date,
-      reference: bill.reference || null,
-      status: bill.status,
-      vendor: bill.vendor_id,
-      items: enriched,
-      totals: {
-        untaxed: Number(bill.total_untaxed_amount) || 0,
-        tax: Number(bill.total_tax_amount) || 0,
-        total: Number(bill.total_amount) || 0,
-      },
-      payments: {
-        paidCash: Number(bill.paid_cash) || 0,
-        paidBank: Number(bill.paid_bank) || 0,
-        amountDue: Number(bill.amount_due) || 0,
-      }
-    };
+    // Generate PDF if requested
     if ((req.query.format || '').toLowerCase() === 'pdf') {
-      const PDFDocument = require('pdfkit');
-      const doc = new PDFDocument({ size: 'A4', margin: 36 });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename=${bill.bill_number}.pdf`);
-      doc.pipe(res);
-
-      doc.fontSize(18).text('Vendor Bill', { align: 'center' }).moveDown(0.5);
-      doc.fontSize(12)
-        .text(`Bill No: ${payload.billNumber}`)
-        .text(`Bill Date: ${new Date(payload.invoiceDate).toDateString()}`)
-        .text(`Due Date: ${payload.dueDate ? new Date(payload.dueDate).toDateString() : '-'}`)
-        .text(`Status: ${payload.status}`)
-        .moveDown(0.5);
-
-      doc.fontSize(12).text('Vendor:', { underline: true });
-      const vend = await Contact.findByPk(payload.vendor);
-      doc.text(`Name: ${vend?.name || ''}`)
-         .text(`Email: ${vend?.email || ''}`)
-         .text(`Mobile: ${vend?.mobile || ''}`)
-         .moveDown(0.5);
-
-      doc.fontSize(12).text('Items:', { underline: true }).moveDown(0.25);
-      payload.items.forEach((it, idx) => {
-        const p = it.product || {};
-        doc.moveDown(0.15)
-          .text(`${idx + 1}. ${p.name || 'Item'} | HSN: ${it.hsnCode || ''}`)
-          .text(`Qty: ${it.quantity}  Unit: ${it.unitPrice}  Tax%: ${it.taxRate}  Line Total: ${it.lineTotal.toFixed(2)}`);
-      });
-
-      doc.moveDown(0.75);
-      doc.fontSize(12).text('Totals:', { underline: true });
-      doc.text(`Untaxed: ${payload.totals.untaxed.toFixed(2)}`)
-         .text(`Tax: ${payload.totals.tax.toFixed(2)}`)
-         .text(`Total: ${payload.totals.total.toFixed(2)}`);
-
-      doc.end();
-      return;
+      return await pdfService.generateVendorBillPDF(bill, res);
     }
+
+    // Return JSON payload for non-PDF requests
+    const payload = pdfService.generatePrintPayload(bill, 'bill');
     res.json({ success: true, print: payload });
   } catch (err) { next(err); }
 };

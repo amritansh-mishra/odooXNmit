@@ -4,6 +4,7 @@ const Product = require('../models/Product');
 const Contact = require('../models/Customer');
 const Counter = require('../models/Counter');
 const Invoice = require('../models/CustomerInvoice');
+const pdfService = require('../services/pdfService');
 
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -33,36 +34,13 @@ exports.printSO = async (req, res, next) => {
     const so = await SalesOrder.findByPk(req.params.id);
     if (!so) return res.status(404).json({ message: 'Sales Order not found' });
 
-    const items = Array.isArray(so.items) ? so.items : [];
-    const enriched = [];
-    for (const l of items) {
-      let product = null;
-      if (l.product) product = await Product.findByPk(l.product);
-      const unitPrice = Number(l.unitPrice) || 0;
-      const qty = Number(l.quantity) || 0;
-      const taxRate = Number(l.taxRate || 0);
-      enriched.push({
-        product: product ? { id: product.id, name: product.name, hsnCode: product.hsn_code } : null,
-        quantity: qty,
-        unitPrice: unitPrice,
-        taxRate,
-        lineUntaxed: unitPrice * qty,
-        lineTax: (unitPrice * qty * taxRate) / 100,
-        lineTotal: unitPrice * qty * (1 + taxRate / 100),
-      });
+    // Generate PDF if requested
+    if ((req.query.format || '').toLowerCase() === 'pdf') {
+      return await pdfService.generateSalesOrderPDF(so, res);
     }
 
-    const payload = {
-      soNumber: so.so_number,
-      soDate: so.so_date,
-      reference: so.reference || null,
-      status: so.status,
-      customer: so.customer_id,
-      items: enriched,
-      totals: {
-        total: Number(so.total_amount) || 0,
-      },
-    };
+    // Return JSON payload for non-PDF requests
+    const payload = pdfService.generatePrintPayload(so, 'so');
     res.json({ success: true, print: payload });
   } catch (err) { next(err); }
 };

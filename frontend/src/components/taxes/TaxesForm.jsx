@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Home, Check, Archive, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Home, Check, Archive, ChevronDown, Trash2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import taxesService from '../../services/taxesService';
 
-const TaxesForm = ({ onBack, onHome, tax = null, mode = 'new' }) => {
+const TaxesForm = ({ onBack, onHome, tax = null, mode = 'new', onSaved, onDeleted }) => {
   const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: tax?.name || '',
     computation: tax?.computation || 'Percentage',
@@ -22,28 +24,83 @@ const TaxesForm = ({ onBack, onHome, tax = null, mode = 'new' }) => {
     }));
   };
 
-  const handleConfirm = () => {
-    console.log('Confirming tax:', formData);
-    onBack();
+  const handleConfirm = async () => {
+    try {
+      setLoading(true);
+      const taxData = {
+        name: formData.name,
+        method: formData.computation === 'Percentage' ? 'percentage' : 'fixed',
+        value: parseFloat(formData.value) || 0,
+        applicableOn: formData.taxFor
+      };
+
+      if (mode === 'new') {
+        const result = await taxesService.createTax(taxData);
+        if (onSaved) onSaved(result.item || result.tax || result, 'new');
+      } else {
+        const result = await taxesService.updateTax(tax.id, taxData);
+        const updated = result.item || result.tax || { id: tax.id, ...taxData };
+        if (onSaved) onSaved(updated, 'edit');
+      }
+      onBack();
+    } catch (err) {
+      console.error('Failed to save tax:', err);
+      alert('Failed to save tax: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleArchived = () => {
-    console.log('Archiving tax:', tax);
-    onBack();
+  const handleDelete = async () => {
+    if (!tax?.id) {
+      alert('No tax selected to delete');
+      return;
+    }
+    if (!window.confirm('Are you sure you want to delete this tax? This action cannot be undone.')) return;
+    try {
+      setLoading(true);
+      await taxesService.deleteTax(tax.id);
+      if (onDeleted) onDeleted(tax.id);
+      onBack();
+    } catch (err) {
+      console.error('Failed to delete tax:', err);
+      alert('Failed to delete tax: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleArchived = async () => {
+    if (!tax?.id) {
+      alert('No tax selected to archive');
+      return;
+    }
+    try {
+      setLoading(true);
+      await taxesService.archiveTax(tax.id);
+      alert('Tax archived successfully');
+      onBack();
+    } catch (err) {
+      console.error('Failed to archive tax:', err);
+      alert('Failed to archive tax: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getNavigationButtons = () => {
     if (user?.role === 'admin') {
       return [
-        { id: 'confirm', label: 'Confirm', icon: Check, action: handleConfirm },
-        { id: 'archived', label: 'Archived', icon: Archive, action: handleArchived },
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'confirm', label: loading ? 'Saving…' : 'Confirm', icon: Check, action: handleConfirm, disabled: loading },
+        { id: 'delete', label: 'Delete', icon: Trash2, action: handleDelete, disabled: loading },
+        { id: 'archived', label: 'Archive', icon: Archive, action: handleArchived, disabled: loading },
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     } else {
       return [
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     }
   };
@@ -108,6 +165,7 @@ const TaxesForm = ({ onBack, onHome, tax = null, mode = 'new' }) => {
                     }}
                     whileTap={{ scale: 0.95 }}
                     onClick={button.action}
+                    disabled={button.disabled}
                   >
                     {ButtonIcon && <ButtonIcon className="w-4 h-4 mr-2" />}
                     {button.label}

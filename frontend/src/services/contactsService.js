@@ -60,6 +60,13 @@ class ContactsService {
   }
 
   /**
+   * Delete contact (admin only)
+   */
+  async deleteContact(id) {
+    return apiService.delete(`/master/contacts/${id}`);
+  }
+
+  /**
    * Search contacts
    */
   async searchContacts(query, type = null) {

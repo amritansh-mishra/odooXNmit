@@ -5,6 +5,7 @@ const Product = require('../models/Product');
 const Contact = require('../models/Customer');
 const CoA = require('../models/CoA');
 const Counter = require('../models/Counter');
+const pdfService = require('../services/pdfService');
 
 function parsePagination(req) {
   const page = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -56,47 +57,13 @@ exports.printInvoice = async (req, res, next) => {
     const inv = await Invoice.findByPk(req.params.id);
     if (!inv) return res.status(404).json({ message: 'Customer Invoice not found' });
 
-    const items = Array.isArray(inv.items) ? inv.items : [];
-    const enriched = [];
-    for (const l of items) {
-      let product = null;
-      if (l.product) product = await Product.findByPk(l.product);
-      const base = (Number(l.unitPrice) || 0) * (Number(l.quantity) || 0);
-      const tax = (base * (Number(l.taxRate) || 0)) / 100;
-      enriched.push({
-        product: product ? { id: product.id, name: product.name, hsnCode: product.hsn_code } : null,
-        account: l.account,
-        hsnCode: l.hsnCode,
-        quantity: l.quantity,
-        unitPrice: l.unitPrice,
-        taxRate: l.taxRate || 0,
-        lineUntaxed: l.lineUntaxed ?? base,
-        lineTax: l.lineTax ?? tax,
-        lineTotal: l.lineTotal ?? base + tax,
-      });
+    // Generate PDF if requested
+    if ((req.query.format || '').toLowerCase() === 'pdf') {
+      return await pdfService.generateCustomerInvoicePDF(inv, res);
     }
 
-    const payload = {
-      invoiceNumber: inv.invoice_number,
-      invoiceDate: inv.invoice_date,
-      dueDate: inv.due_date,
-      reference: inv.reference || null,
-      status: inv.status,
-      customer: inv.customer_id,
-      salesOrder: inv.sales_order_id,
-      items: enriched,
-      totals: {
-        untaxed: Number(inv.total_untaxed_amount) || 0,
-        tax: Number(inv.total_tax_amount) || 0,
-        total: Number(inv.total_amount) || 0,
-      },
-      payments: {
-        paidCash: Number(inv.paid_cash) || 0,
-        paidBank: Number(inv.paid_bank) || 0,
-        amountDue: Number(inv.amount_due) || 0,
-      }
-    };
-
+    // Return JSON payload for non-PDF requests
+    const payload = pdfService.generatePrintPayload(inv, 'invoice');
     res.json({ success: true, print: payload });
   } catch (err) { next(err); }
 };

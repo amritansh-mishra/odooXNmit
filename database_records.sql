@@ -1,8 +1,3 @@
--- =====================================================
--- ODOOXNMIT DATABASE RECORDS - FINAL WORKING VERSION
--- =====================================================
--- This file contains the corrected database records that work with the actual schema
-
 USE odooxnmit;
 
 -- =====================================================
@@ -219,13 +214,3 @@ SELECT 'payments', COUNT(*) FROM payments;
 -- Username: newadmin, Password: password123
 -- Username: newuser, Password: password123
 -- Username: newaccountant, Password: password123
-
--- =====================================================
--- USAGE INSTRUCTIONS
--- =====================================================
--- 1. Make sure MySQL is running
--- 2. Create database: CREATE DATABASE odooxnmit;
--- 3. Run this script: mysql -u projectuser -pstrongpassword odooxnmit < final_database_records.sql
--- 4. Start backend: cd backend && node server.js
--- 5. Start frontend: cd frontend && npm run dev
--- 6. Access application: http://localhost:3000

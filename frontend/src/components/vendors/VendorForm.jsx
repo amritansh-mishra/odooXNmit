@@ -1,23 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Upload, Building2, Home, Check, Edit, Trash2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import contactsService from '../../services/contactsService';
 
-const VendorForm = ({ onBack, onHome, vendor, mode }) => {
+const VendorForm = ({ onBack, onHome, vendor, mode, onSaved, onDeleted }) => {
   const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: vendor?.name || '',
-    email: vendor?.email || '',
-    mobile: vendor?.mobile || '',
-    gstNo: vendor?.gstNo || '',
-    address: vendor?.address || '',
-    city: vendor?.city || '',
-    state: vendor?.state || '',
-    pincode: vendor?.pincode || '',
-    image: vendor?.image || ''
+    name: '',
+    email: '',
+    mobile: '',
+    gstNo: '',
+    city: '',
+    state: '',
+    pincode: '',
+    image: ''
   });
 
-  const [imagePreview, setImagePreview] = useState(vendor?.image || '');
+  const [imagePreview, setImagePreview] = useState('');
+
+  useEffect(() => {
+    if (vendor && mode === 'edit') {
+      setFormData({
+        name: vendor.name || '',
+        email: vendor.email || '',
+        mobile: vendor.mobile || '',
+        gstNo: vendor.gst_no || vendor.gstNo || '',
+        city: vendor.address_city || vendor.city || '',
+        state: vendor.address_state || vendor.state || '',
+        pincode: vendor.address_pincode || vendor.pincode || '',
+        image: vendor.image || ''
+      });
+      setImagePreview(vendor.image || '');
+    }
+  }, [vendor, mode]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -39,47 +56,75 @@ const VendorForm = ({ onBack, onHome, vendor, mode }) => {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Vendor form submitted:', formData);
-    // Add your form submission logic here
-    onBack();
+    if (!formData.name.trim()) {
+      alert('Vendor name is required');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const vendorData = {
+        name: formData.name.trim(),
+        type: 'Vendor', // Ensure type is set to Vendor
+        email: formData.email.trim(),
+        mobile: formData.mobile.trim(),
+        gst_no: formData.gstNo.trim(),
+        address_city: formData.city.trim(),
+        address_state: formData.state.trim(),
+        address_pincode: formData.pincode,
+        profile_image: formData.image
+      };
+      
+      if (mode === 'new') {
+        const result = await contactsService.createContact(vendorData);
+        if (onSaved) onSaved(result.item || result.contact || result, 'new');
+      } else {
+        const result = await contactsService.updateContact(vendor.id, vendorData);
+        const updated = result.item || result.contact || { id: vendor.id, ...vendorData };
+        if (onSaved) onSaved(updated, 'edit');
+      }
+      onBack();
+    } catch (err) {
+      console.error('Error saving vendor:', err);
+      alert('Failed to save vendor: ' + (err.response?.data?.message || err.message));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleConfirm = () => {
-    console.log('Confirming vendor:', formData);
-    // Handle save/update logic here
-    onBack();
-  };
-
-  const handleModify = () => {
-    console.log('Modifying vendor:', formData);
-    // Handle modify logic here
-  };
-
-  const handleDelete = () => {
-    console.log('Deleting vendor:', formData);
-    // Handle delete logic here
-    onBack();
+  const handleDelete = async () => {
+    if (!window.confirm('Are you sure you want to delete this vendor? This action cannot be undone.')) return;
+    try {
+      setLoading(true);
+      await contactsService.deleteContact(vendor.id);
+      if (onDeleted) onDeleted(vendor.id);
+      onBack();
+    } catch (err) {
+      console.error('Error deleting vendor:', err);
+      alert('Failed to delete vendor: ' + (err.response?.data?.message || err.message));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getNavigationButtons = () => {
     if (user?.role === 'admin') {
       return [
-        { id: 'confirm', label: 'Confirm', icon: Check, action: handleConfirm },
-        { id: 'modify', label: 'Modify', icon: Edit, action: handleModify },
-        { id: 'delete', label: 'Delete', icon: Trash2, action: handleDelete },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'confirm', label: loading ? 'Saving…' : 'Confirm', icon: Check, action: handleSubmit, disabled: loading },
+        { id: 'delete', label: 'Delete', icon: Trash2, action: handleDelete, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     } else if (user?.role === 'accountant') {
       return [
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     } else {
       return [
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     }
   };
@@ -107,6 +152,7 @@ const VendorForm = ({ onBack, onHome, vendor, mode }) => {
                   <motion.button
                     key={button.id}
                     onClick={button.action}
+                    disabled={button.disabled}
                     className="flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                     style={{
                       backgroundColor: button.id === 'confirm' ? 'var(--success)' : 
@@ -128,7 +174,7 @@ const VendorForm = ({ onBack, onHome, vendor, mode }) => {
                     }}
                   >
                     {ButtonIcon && <ButtonIcon className="w-4 h-4 mr-2" />}
-                    {button.label}
+                    {button.id === 'confirm' && loading ? 'Saving…' : button.label}
                   </motion.button>
                 );
               })}
@@ -382,6 +428,7 @@ const VendorForm = ({ onBack, onHome, vendor, mode }) => {
                     e.target.style.borderColor = 'var(--border)';
                     e.target.style.color = 'var(--text-primary)';
                   }}
+                  disabled={loading}
                 >
                   Cancel
                 </motion.button>
@@ -393,8 +440,9 @@ const VendorForm = ({ onBack, onHome, vendor, mode }) => {
                   whileTap={{ scale: 0.98 }}
                   onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--primary-dark)'}
                   onMouseLeave={(e) => e.target.style.backgroundColor = 'var(--primary)'}
+                  disabled={loading}
                 >
-                  {mode === 'edit' ? 'Update Vendor' : 'Create Vendor'}
+                  {loading ? 'Saving…' : (mode === 'edit' ? 'Update Vendor' : 'Create Vendor')}
                 </motion.button>
               </div>
             </form>

@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Home, Check, Archive, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Home, Check, Archive, ChevronDown, Trash2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import coaService from '../../services/coaService';
 
-const ChartOfAccountsForm = ({ onBack, onHome, account = null, mode = 'new' }) => {
+const ChartOfAccountsForm = ({ onBack, onHome, account = null, mode = 'new', onSaved, onDeleted }) => {
   const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: account?.name || '',
+    name: account?.name || account?.account_name || '',
     type: account?.type || ''
   });
 
@@ -19,28 +21,82 @@ const ChartOfAccountsForm = ({ onBack, onHome, account = null, mode = 'new' }) =
     }));
   };
 
-  const handleConfirm = () => {
-    console.log('Confirming account:', formData);
-    onBack();
+  const handleConfirm = async () => {
+    try {
+      setLoading(true);
+      const accountData = {
+        accountName: formData.name,
+        type: formData.type,
+        description: `${formData.type} account: ${formData.name}`
+      };
+
+      if (mode === 'new') {
+        const result = await coaService.createAccount(accountData);
+        if (onSaved) onSaved(result.item || result.account || result, 'new');
+      } else {
+        const result = await coaService.updateAccount(account.id, accountData);
+        const updated = result.item || result.account || { id: account.id, ...accountData };
+        if (onSaved) onSaved(updated, 'edit');
+      }
+      onBack();
+    } catch (err) {
+      console.error('Failed to save account:', err);
+      alert('Failed to save account: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleArchived = () => {
-    console.log('Archiving account:', account);
-    onBack();
+  const handleDelete = async () => {
+    if (!account?.id) {
+      alert('No account selected to delete');
+      return;
+    }
+    if (!window.confirm('Are you sure you want to delete this account? This action cannot be undone.')) return;
+    try {
+      setLoading(true);
+      await coaService.deleteAccount(account.id);
+      if (onDeleted) onDeleted(account.id);
+      onBack();
+    } catch (err) {
+      console.error('Failed to delete account:', err);
+      alert('Failed to delete account: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleArchived = async () => {
+    if (!account?.id) {
+      alert('No account selected to archive');
+      return;
+    }
+    try {
+      setLoading(true);
+      await coaService.archiveAccount(account.id);
+      alert('Account archived successfully');
+      onBack();
+    } catch (err) {
+      console.error('Failed to archive account:', err);
+      alert('Failed to archive account: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getNavigationButtons = () => {
     if (user?.role === 'admin') {
       return [
-        { id: 'confirm', label: 'Confirm', icon: Check, action: handleConfirm },
-        { id: 'archived', label: 'Archived', icon: Archive, action: handleArchived },
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'confirm', label: loading ? 'Saving…' : 'Confirm', icon: Check, action: handleConfirm, disabled: loading },
+        { id: 'delete', label: 'Delete', icon: Trash2, action: handleDelete, disabled: loading },
+        { id: 'archived', label: 'Archive', icon: Archive, action: handleArchived, disabled: loading },
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     } else {
       return [
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     }
   };
@@ -102,6 +158,7 @@ const ChartOfAccountsForm = ({ onBack, onHome, account = null, mode = 'new' }) =
                     }}
                     whileTap={{ scale: 0.95 }}
                     onClick={button.action}
+                    disabled={button.disabled}
                   >
                     {ButtonIcon && <ButtonIcon className="w-4 h-4 mr-2" />}
                     {button.label}

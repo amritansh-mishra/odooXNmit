@@ -9,10 +9,15 @@ const {
   updateContact,
   archiveContact,
   unarchiveContact,
+  deleteContact,
+  debugContacts,
 } = require('../controllers/contactsController');
 
 // Protect all master routes
 router.use(requireAuth);
+
+// Debug route (should be before /:id route)
+router.get('/debug', debugContacts);
 
 router.get('/', listContacts);
 router.get('/:id', getContact);
@@ -51,5 +56,8 @@ router.put(
 // Archive (admin only)
 router.patch('/:id/archive', requireRole('admin'), archiveContact);
 router.patch('/:id/unarchive', requireRole('admin'), unarchiveContact);
+
+// Hard delete (admin only)
+router.delete('/:id', requireRole('admin'), deleteContact);
 
 module.exports = router;

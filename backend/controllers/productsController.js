@@ -99,3 +99,13 @@ exports.unarchiveProduct = async (req, res, next) => {
     res.json({ success: true, item: doc });
   } catch (err) { next(err); }
 };
+
+// DELETE /api/master/products/:id
+exports.deleteProduct = async (req, res, next) => {
+  try {
+    const doc = await Product.findByPk(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Product not found' });
+    await doc.destroy();
+    res.json({ success: true, message: 'Product deleted' });
+  } catch (err) { next(err); }
+};

@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, Plus, Building2, Home, Check, Edit, Trash2 } from 'lucide-react';
 import VendorForm from './VendorForm';
 import { useAuth } from '../../hooks/useAuth';
+import contactsService from '../../services/contactsService';
 
 const VendorMaster = ({ onBack, onHome }) => {
   const { user } = useAuth();
@@ -12,51 +13,90 @@ const VendorMaster = ({ onBack, onHome }) => {
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [toast, setToast] = useState(null);
 
-  // Fetch vendors from backend
-  useEffect(() => {
-    const fetchVendors = async () => {
-      setLoading(true);
-      setError('');
+  const loadVendors = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      console.log('🔄 Loading vendors from API...');
+      
+      // Get debug info to see what's in the database
       try {
-        const token = localStorage.getItem('auth_token');
-        const res = await fetch('/api/master/contacts?type=Vendor&limit=50', {
+        const debugResponse = await fetch('/api/master/contacts/debug', {
           headers: {
-            Authorization: token ? `Bearer ${token}` : undefined,
-          },
+            'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+          }
         });
-        if (!res.ok) throw new Error('Failed to load vendors');
-        const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
-        // Map backend contact model to UI shape
-        const mapped = items.map((c) => ({
-          id: c._id || c.id,
-          image: c.profileImage || '/api/placeholder/40/40',
-          name: c.name,
-          email: c.email,
-          mobile: c.mobile || '',
-          gstNo: c.gstNo || '-',
-          address: c.address?.street || '',
-          city: c.address?.city || '',
-          state: c.address?.state || '',
-          pincode: c.address?.pincode || ''
-        }));
-        setVendors(mapped);
-      } catch (e) {
-        console.error(e);
-        setError('Unable to fetch vendors from server. Showing demo data.');
-        // Fallback demo data (previous static list)
-        setVendors([
-          { id: 1, image: '/api/placeholder/40/40', name: 'ABC Suppliers Ltd', email: 'contact@abcsuppliers.com', mobile: '+91 9876543210', gstNo: '27ABCDE1234F1Z5', address: '123 Industrial Area', city: 'Mumbai', state: 'Maharashtra', pincode: '400001' },
-          { id: 2, image: '/api/placeholder/40/40', name: 'XYZ Trading Co', email: 'info@xyztrading.com', mobile: '+91 8765432109', gstNo: '29XYZAB5678G2H6', address: '456 Business Park', city: 'Bangalore', state: 'Karnataka', pincode: '560001' },
-          { id: 3, image: '/api/placeholder/40/40', name: 'PQR Industries', email: 'sales@pqrindustries.com', mobile: '+91 7654321098', gstNo: '06PQRST9012I3J4', address: '789 Manufacturing Hub', city: 'Delhi', state: 'Delhi', pincode: '110001' },
-        ]);
-      } finally {
-        setLoading(false);
+        const debugData = await debugResponse.json();
+        console.log('🔍 Debug data from database:', debugData);
+        console.log('📊 Type statistics:', debugData.typeStats);
+      } catch (debugError) {
+        console.warn('⚠️ Could not fetch debug data:', debugError);
       }
-    };
-    fetchVendors();
+      
+      // Get vendors with type=Vendor filter using contactsService
+      const data = await contactsService.getContacts({ 
+        type: 'Vendor',
+        limit: 100
+      });
+      
+      console.log('📡 Vendor API Response:', data);
+      console.log('📋 Vendor items received:', data.items?.length || 0);
+      
+      const items = Array.isArray(data.items) ? data.items : [];
+      setVendors(items);
+      
+      if (items.length === 0) {
+        console.warn('⚠️ No vendors found in database');
+        setError('No vendors found in database. Make sure vendor records have type = "Vendor".');
+      } else {
+        console.log('✅ Successfully loaded', items.length, 'vendors');
+      }
+    } catch (e) {
+      console.error('❌ Failed to load vendors:', e);
+      console.error('❌ Vendor error details:', {
+        message: e.message,
+        status: e.status,
+        data: e.data
+      });
+      
+      setError(`Unable to fetch vendors from server: ${e.message || 'Unknown error'}`);
+      setVendors([
+        { id: 1, name: 'ABC Suppliers Ltd', email: 'contact@abcsuppliers.com', mobile: '+91 9876543210', gst_no: '27ABCDE1234F1Z5', city: 'Mumbai', state: 'Maharashtra' },
+        { id: 2, name: 'XYZ Trading Co', email: 'info@xyztrading.com', mobile: '+91 8765432109', gst_no: '29XYZAB5678G2H6', city: 'Bangalore', state: 'Karnataka' },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadVendors();
   }, []);
+
+  const showToast = (message) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleSaved = (savedItem, mode) => {
+    if (!savedItem) return;
+    if (mode === 'new') {
+      setVendors((prev) => [savedItem, ...prev]);
+      showToast('Vendor created');
+    } else {
+      setVendors((prev) => prev.map((v) => (v.id === savedItem.id ? { ...v, ...savedItem } : v)));
+      showToast('Vendor updated');
+    }
+    setShowForm(false);
+  };
+
+  const handleDeleted = (id) => {
+    setVendors((prev) => prev.filter((v) => v.id !== id));
+    showToast('Vendor deleted');
+    setShowForm(false);
+  };
 
   const handleVendorClick = (vendor) => {
     setSelectedVendor(vendor);
@@ -77,17 +117,14 @@ const VendorMaster = ({ onBack, onHome }) => {
 
   const handleConfirm = () => {
     console.log('Confirming vendor operation');
-    // Handle confirm logic here
   };
 
   const handleModify = () => {
     console.log('Modifying vendor');
-    // Handle modify logic here
   };
 
   const handleDelete = () => {
     console.log('Deleting vendor');
-    // Handle delete logic here
   };
 
   const getNavigationButtons = () => {
@@ -107,7 +144,6 @@ const VendorMaster = ({ onBack, onHome }) => {
     }
   };
 
-  // If showing form, render VendorForm
   if (showForm) {
     return (
       <VendorForm
@@ -115,13 +151,14 @@ const VendorMaster = ({ onBack, onHome }) => {
         onHome={onHome}
         vendor={selectedVendor}
         mode={formMode}
+        onSaved={handleSaved}
+        onDeleted={handleDeleted}
       />
     );
   }
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--background)' }}>
-      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -152,7 +189,6 @@ const VendorMaster = ({ onBack, onHome }) => {
         </div>
       </motion.div>
 
-      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -164,7 +200,6 @@ const VendorMaster = ({ onBack, onHome }) => {
             backgroundColor: 'var(--surface)'
           }}
         >
-          {/* List View Header */}
           <div className="p-6 border-b" style={{ borderColor: 'var(--border)' }}>
             <div className="flex items-center justify-between">
               <div>
@@ -190,7 +225,12 @@ const VendorMaster = ({ onBack, onHome }) => {
             </div>
           </div>
 
-          {/* Vendor List */}
+          {toast && (
+            <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mx-6 mb-4">
+              <p className="text-yellow-800 text-sm">{toast}</p>
+            </div>
+          )}
+
           <div className="p-6 space-y-3">
             {loading ? (
               <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading vendors...</div>
@@ -226,7 +266,6 @@ const VendorMaster = ({ onBack, onHome }) => {
                   onClick={() => handleVendorClick(vendor)}
                 >
                   <div className="flex items-center justify-between">
-                    {/* Left side - Vendor info */}
                     <div className="flex items-center space-x-4">
                       <div className="w-12 h-12 rounded-lg flex items-center justify-center"
                         style={{
@@ -241,12 +280,11 @@ const VendorMaster = ({ onBack, onHome }) => {
                           {vendor.name}
                         </h3>
                         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                          {vendor.city ? `${vendor.city}, ${vendor.state}` : ''}
+                          {vendor.address_city ? `${vendor.address_city}, ${vendor.address_state}` : ''}
                         </p>
                       </div>
                     </div>
 
-                    {/* Right side - Contact info */}
                     <div className="text-right">
                       <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                         {vendor.email}

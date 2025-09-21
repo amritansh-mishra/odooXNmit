@@ -93,6 +93,16 @@ exports.unarchiveAccount = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// DELETE /api/master/coa/:id
+exports.deleteAccount = async (req, res, next) => {
+  try {
+    const doc = await CoA.findByPk(req.params.id);
+    if (!doc) return res.status(404).json({ message: 'Account not found' });
+    await doc.destroy();
+    res.json({ success: true, message: 'Account deleted' });
+  } catch (err) { next(err); }
+};
+
 // POST /api/master/coa/seed-defaults
 exports.seedDefaults = async (req, res, next) => {
   try {

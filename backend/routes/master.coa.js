@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../middlewares/jwtAuth');
+const { requireAuth, requireRole } = require('../middlewares/jwtAuth');
 const {
   listAccounts,
   getAccount,
@@ -8,6 +8,7 @@ const {
   updateAccount,
   archiveAccount,
   unarchiveAccount,
+  deleteAccount,
   seedDefaults,
   health,
 } = require('../controllers/coaController');
@@ -21,6 +22,10 @@ router.post('/', createAccount);
 router.put('/:id', updateAccount);
 router.patch('/:id/archive', archiveAccount);
 router.patch('/:id/unarchive', unarchiveAccount);
+
+// Hard delete (admin only)
+router.delete('/:id', requireRole('admin'), deleteAccount);
+
 router.post('/seed-defaults', seedDefaults);
 router.get('/health', health);
 

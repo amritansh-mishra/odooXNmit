@@ -2,18 +2,20 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Home, Check, Edit, Trash2, Archive } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
+import productsService from '../../services/productsService';
 
-const ProductForm = ({ onBack, onHome, product = null, mode = 'new' }) => {
+const ProductForm = ({ onBack, onHome, product = null, mode = 'new', onSaved, onDeleted }) => {
   const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: product?.name || '',
     type: product?.type || 'Goods',
     category: product?.category || '',
-    hsnCode: product?.hsnCode || '',
-    salesPrice: product?.salesPrice || '',
-    salesTax: product?.salesTax || '5',
-    purchasePrice: product?.purchasePrice || '',
-    purchaseTax: product?.purchaseTax || '5'
+    hsnCode: product?.hsnCode || product?.hsn_code || '',
+    salesPrice: product?.salesPrice || product?.sales_price || '',
+    salesTax: product?.salesTax || product?.sales_tax || '5',
+    purchasePrice: product?.purchasePrice || product?.purchase_price || '',
+    purchaseTax: product?.purchaseTax || product?.purchase_tax || '5'
   });
 
   const [showHsnLookup, setShowHsnLookup] = useState(false);
@@ -25,28 +27,87 @@ const ProductForm = ({ onBack, onHome, product = null, mode = 'new' }) => {
     }));
   };
 
-  const handleConfirm = () => {
-    console.log('Confirming product:', formData);
-    onBack();
+  const handleConfirm = async () => {
+    try {
+      setLoading(true);
+      const productData = {
+        name: formData.name,
+        type: formData.type,
+        category: formData.category,
+        hsnCode: formData.hsnCode,
+        salesPrice: parseFloat(formData.salesPrice) || 0,
+        salesTax: parseFloat(formData.salesTax) || 0,
+        purchasePrice: parseFloat(formData.purchasePrice) || 0,
+        purchaseTax: parseFloat(formData.purchaseTax) || 0
+      };
+
+      if (mode === 'new') {
+        const result = await productsService.createProduct(productData);
+        if (onSaved) onSaved(result.item || result.product || result, 'new');
+      } else {
+        const result = await productsService.updateProduct(product.id, productData);
+        const updated = result.item || result.product || { id: product.id, ...productData };
+        if (onSaved) onSaved(updated, 'edit');
+      }
+      onBack();
+    } catch (err) {
+      console.error('Failed to save product:', err);
+      alert('Failed to save product: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleArchived = () => {
-    console.log('Archiving product:', product);
-    onBack();
+  const handleDelete = async () => {
+    if (!product?.id) {
+      alert('No product selected to delete');
+      return;
+    }
+    if (!window.confirm('Are you sure you want to delete this product? This action cannot be undone.')) return;
+    try {
+      setLoading(true);
+      await productsService.deleteProduct(product.id);
+      if (onDeleted) onDeleted(product.id);
+      onBack();
+    } catch (err) {
+      console.error('Failed to delete product:', err);
+      alert('Failed to delete product: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleArchived = async () => {
+    if (!product?.id) {
+      alert('No product selected to archive');
+      return;
+    }
+    try {
+      setLoading(true);
+      await productsService.archiveProduct(product.id);
+      alert('Product archived successfully');
+      onBack();
+    } catch (err) {
+      console.error('Failed to archive product:', err);
+      alert('Failed to archive product: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const getNavigationButtons = () => {
     if (user?.role === 'admin') {
       return [
-        { id: 'confirm', label: 'Confirm', icon: Check, action: handleConfirm },
-        { id: 'archived', label: 'Archived', icon: Archive, action: handleArchived },
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'confirm', label: loading ? 'Saving…' : 'Confirm', icon: Check, action: handleConfirm, disabled: loading },
+        { id: 'delete', label: 'Delete', icon: Trash2, action: handleDelete, disabled: loading },
+        { id: 'archived', label: 'Archive', icon: Archive, action: handleArchived, disabled: loading },
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     } else {
       return [
-        { id: 'home', label: 'Home', icon: Home, action: onHome },
-        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack }
+        { id: 'home', label: 'Home', icon: Home, action: onHome, disabled: loading },
+        { id: 'back', label: 'Back', icon: ArrowLeft, action: onBack, disabled: loading }
       ];
     }
   };
@@ -108,6 +169,7 @@ const ProductForm = ({ onBack, onHome, product = null, mode = 'new' }) => {
                     }}
                     whileTap={{ scale: 0.95 }}
                     onClick={button.action}
+                    disabled={button.disabled}
                   >
                     {ButtonIcon && <ButtonIcon className="w-4 h-4 mr-2" />}
                     {button.label}

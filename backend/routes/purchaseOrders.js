@@ -9,6 +9,7 @@ const {
   updatePO,
   confirmPO,
   cancelPO,
+  draftPO,
   createBillFromPO,
   printPO,
 } = require('../controllers/purchaseOrdersController');
@@ -28,8 +29,8 @@ router.post(
     body('items').isArray({ min: 1 }).withMessage('At least one item is required'),
     body('items.*.product').notEmpty().withMessage('product is required'),
     body('items.*.quantity').isFloat({ gt: 0 }).withMessage('quantity must be > 0'),
-    body('items.*.unitPrice').isFloat({ gte: 0 }).withMessage('unitPrice must be >= 0'),
-    body('items.*.taxRate').optional().isFloat({ gte: 0 }),
+    body('items.*.unitPrice').optional().isFloat({ gte: 0 }).withMessage('unitPrice must be >= 0'),
+    body('items.*.taxRate').optional().isFloat({ gte: 0 }).withMessage('taxRate must be >= 0'),
   ],
   (req, res, next) => {
     const errors = validationResult(req);
@@ -59,6 +60,7 @@ router.put(
 // Status transitions
 router.post('/:id/confirm', requireRole('admin'), confirmPO);
 router.post('/:id/cancel', requireRole('admin'), cancelPO);
+router.post('/:id/draft', requireRole('admin'), draftPO);
 
 // Create Vendor Bill from a confirmed PO
 router.post('/:id/create-bill', requireRole('admin'), createBillFromPO);

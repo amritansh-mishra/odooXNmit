@@ -23,13 +23,24 @@ const connectDB = async () => {
     // Ensure models are loaded BEFORE sync
     require('../models');
 
-    // Sync all models (consider migrations for production)
-    await sequelize.sync({ alter: true });
+    // Use force: false and alter: false to avoid recreating indexes
+    // This prevents the "too many keys" error
+    await sequelize.sync({ 
+      force: false,  // Don't drop and recreate tables
+      alter: false   // Don't alter existing table structure
+    });
     console.log('✅ Sequelize models synchronized successfully.');
 
     return sequelize;
   } catch (error) {
     console.error('❌ Unable to connect to MySQL:', error.message);
+    
+    // If sync fails due to table structure, try without sync
+    if (error.message.includes('Too many keys') || error.message.includes('max 64 keys')) {
+      console.log('⚠️ Skipping table sync due to index limitations. Please run the database migration script manually.');
+      return sequelize;
+    }
+    
     process.exit(1);
   }
 };

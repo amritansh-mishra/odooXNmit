@@ -11,6 +11,7 @@ const ContactMaster = ({ onBack, onHome }) => {
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [toast, setToast] = useState(null);
 
   const handleContactClick = (contact) => {
     setSelectedContact(contact);
@@ -22,6 +23,28 @@ const ContactMaster = ({ onBack, onHome }) => {
     setSelectedContact(null);
     setFormMode('new');
     setShowForm(true);
+  };
+
+  const showToast = (message) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  // Optimistic update from form
+  const handleSaved = (savedItem, mode) => {
+    if (!savedItem) return;
+    if (mode === 'new') {
+      setContacts((prev) => [savedItem, ...prev]);
+      showToast('Contact created');
+    } else {
+      setContacts((prev) => prev.map((c) => (c.id === savedItem.id ? { ...c, ...savedItem } : c)));
+      showToast('Contact updated');
+    }
+  };
+
+  const handleDeleted = (id) => {
+    setContacts((prev) => prev.filter((c) => c.id !== id));
+    showToast('Contact deleted');
   };
 
   const handleBackFromForm = () => {
@@ -36,42 +59,50 @@ const ContactMaster = ({ onBack, onHome }) => {
     try {
       setLoading(true);
       setError(null);
-      const response = await contactsService.getContacts();
-      setContacts(response.items || []);
+      console.log('🔄 Loading contacts from API...');
+      
+      // Explicitly request only Customer type contacts
+      const response = await contactsService.getContacts({ 
+        limit: 100,
+        type: 'Customer', // Only get Customer type contacts
+        isActive: undefined // Don't filter by active status
+      });
+      
+      console.log('📡 API Response:', response);
+      console.log('📋 Items received:', response.items?.length || 0);
+      
+      const items = response.items || [];
+      setContacts(items);
+      
+      if (items.length === 0) {
+        console.warn('⚠️ No customer contacts returned from API, but no error thrown');
+        setError('No customer contacts found in database.');
+      } else {
+        console.log('✅ Successfully loaded', items.length, 'customer contacts');
+      }
     } catch (err) {
-      console.error('Failed to load contacts:', err);
-      setError('Failed to load contacts. Using mock data for demo.');
+      console.error('❌ Failed to load contacts:', err);
+      console.error('❌ Error details:', {
+        message: err.message,
+        status: err.status,
+        data: err.data
+      });
+      
+      setError(`Failed to load contacts: ${err.message || 'Unknown error'}`);
+      
       // Fallback to mock data
       setContacts([
         {
           id: 1,
-          name: 'Azure Interior',
-          email: 'azure.interior24@example.com',
+          name: 'Sample Customer 1',
+          email: 'customer1@example.com',
           mobile: '+91 9090909090'
         },
         {
           id: 2,
-          name: 'Nimesh Pathak',
-          email: 'brandon.freeman55@example.com',
-          mobile: '+91 9090909090'
-        },
-        {
-          id: 3,
-          name: 'Rajesh Kumar',
-          email: 'rajesh.kumar@example.com',
+          name: 'Sample Customer 2',
+          email: 'customer2@example.com',
           mobile: '+91 8888888888'
-        },
-        {
-          id: 4,
-          name: 'Priya Sharma',
-          email: 'priya.sharma@example.com',
-          mobile: '+91 7777777777'
-        },
-        {
-          id: 5,
-          name: 'Amit Singh',
-          email: 'amit.singh@example.com',
-          mobile: '+91 6666666666'
         }
       ]);
     } finally {
@@ -79,12 +110,10 @@ const ContactMaster = ({ onBack, onHome }) => {
     }
   };
 
-  // Load contacts on component mount
   useEffect(() => {
     loadContacts();
   }, []);
 
-  // If showing form, render ContactForm
   if (showForm) {
     return (
       <ContactForm
@@ -92,6 +121,8 @@ const ContactMaster = ({ onBack, onHome }) => {
         onHome={onHome}
         contact={selectedContact}
         mode={formMode}
+        onSaved={handleSaved}
+        onDeleted={handleDeleted}
       />
     );
   }
@@ -190,6 +221,12 @@ const ContactMaster = ({ onBack, onHome }) => {
             </div>
           ) : (
             <>
+              {/* Toast */}
+              {toast && (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mx-4 mb-4">
+                  <p className="text-yellow-800 text-sm">{toast}</p>
+                </div>
+              )}
               {/* Contact Rows */}
               <div className="divide-y" style={{borderColor: 'var(--border)'}}>
                 {contacts.map((contact, index) => (
